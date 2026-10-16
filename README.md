@@ -1,8 +1,8 @@
 # StarArm 102 Force Feedback
 
-StarArm 102 主从遥操作控制器，提供从臂电流反馈、主臂阻尼、堵转检测与位置保持。
+StarArm 102 主从遥操作控制器，支持 StarArm 从臂电流反馈，以及 Seeed B601-DM 从臂力矩反馈，提供主臂阻尼、堵转检测与位置保持。
 
-保留单文件运行方式，将调参、状态查询和锁定控制集中到终端。适用于 102LD，以及配有按键板的 102HD。
+StarArm 原入口保留单文件运行方式；601 入口复用 Leader 控制核心。调参、状态查询和锁定控制集中在终端，支持 102LD 和配有按键板的 102HD。
 
 ## 功能
 
@@ -15,7 +15,25 @@ StarArm 102 主从遥操作控制器，提供从臂电流反馈、主臂阻尼�
 
 电流反馈是负载的近似量，不是经过标定的末端力或力矩测量。
 
-## 快速开始
+## Seeed B601-DM 版本
+
+使用 StarArm Leader 控制 Seeed 601DM：从臂角度跟随、力矩负载反馈、堵转锁定、通信故障保持和配对标定均位于独立入口。
+
+```bash
+python stararm102_b601_dm.py --simulate
+python stararm102_b601_dm.py --simulate --simulate-stall-joint 0
+```
+
+默认模拟模式不连接设备。实机需先核对电机模式、方向、零位、限位与负载标尺，详见 [601 完整教程与逻辑](docs/b601_dm.md)。示例配置未标定，真实设备尚未联调。
+
+| 从臂 | 入口 | 反馈量 |
+|---|---|---|
+| StarArm 102 | `stararm102_ro.py` | 电流 mA |
+| Seeed B601-DM | `stararm102_b601_dm.py` | 估计力矩 Nm |
+
+## StarArm 从臂快速开始
+
+以下操作对应 `stararm102_ro.py`；601 的实机配置和命令差异见上面的专用教程。
 
 需要 Python 3.10+、主从机械臂、串口连接与设备供电。验证情况见 [测试说明](docs/testing.md)。
 
@@ -65,6 +83,7 @@ python stararm102_ro.py --leader_type 102HD
 
 | 文档 | 内容 |
 |---|---|
+| [601 版本教程与逻辑](docs/b601_dm.md) | Seeed B601-DM 配置、标定、模拟、实机入口与故障保持 |
 | [安装与上机教程](docs/tutorial.md) | 接线、环境、端口、启动、基础验证和标定 |
 | [代码逻辑](docs/architecture.md) | 主循环、数据流、负载映射、堵转状态和锁力维护 |
 | [命令与参数](docs/reference.md) | 终端命令、启动参数和默认值 |
@@ -75,7 +94,10 @@ python stararm102_ro.py --leader_type 102HD
 ## 项目结构
 
 ```text
-stararm102_ro.py          控制程序
+stararm102_ro.py          StarArm 从臂控制与 Leader 核心
+stararm102_b601_dm.py     Seeed B601-DM 入口
+b601_dm.py               达妙串口桥与关节映射
+configs/                 601 配置示例
 requirements.txt         串口与舵机 SDK 依赖
 requirements-dev.txt     开发工具
 README.md
