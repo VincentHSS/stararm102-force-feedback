@@ -1,0 +1,36 @@
+{
+  "enabled": true,
+  "torque_reference_nm": {
+    "shoulder_pan": 5.0,
+    "shoulder_lift": 5.0,
+    "elbow_flex": 5.0,
+    "wrist_flex": 1.0,
+    "wrist_yaw": 1.0,
+    "wrist_roll": 1.0,
+    "gripper": 1.0
+  },
+  "torque_floor_nm": {
+    "shoulder_pan": 0.1,
+    "shoulder_lift": 0.1,
+    "elbow_flex": 0.1,
+    "wrist_flex": 0.05,
+    "wrist_yaw": 0.05,
+    "wrist_roll": 0.05,
+    "gripper": 0.05
+  },
+  "power_min_mw": 1,
+  "power_max_mw": 1200,
+  "power_deadband_mw": 20,
+  "sample_hz": 30.0,
+  "lock_deg": 20.0,
+  "release_deg": 8.0,
+  "window_s": 0.4,
+  "tracking_ratio": 0.35,
+  "tracking_min_deg": 1.5,
+  "convergence_deg": 1.0,
+  "minimum_load_ratio": 0.3,
+  "confirm_windows": 1,
+  "release_stable_s": 0.3,
+  "hold_mw": 6000,
+  "relock_s": 1.0
+}

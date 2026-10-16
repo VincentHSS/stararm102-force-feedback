@@ -1,0 +1,12 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "stararm-lerobot-auto-feedback"
+version = "0.1.0"
+description = "Automatic StarArm Leader feedback inside the official LeRobot teleoperation loop"
+requires-python = ">=3.10"
+
+[tool.setuptools.packages.find]
+include = ["stararm_auto_feedback*"]

@@ -9,7 +9,7 @@ python -m py_compile stararm102_ro.py
 python stararm102_ro.py --help
 ```
 
-测试使用 Python 标准库 `unittest`，共 62 项，无需连接机械臂，其中 Windows 旧编码回归在其他系统跳过。控制器用模拟对象记录串口方法调用；主循环测试替换串口工厂、控制器和 sleep，不访问真实设备。
+测试使用 Python 标准库 `unittest`，共 52 项，无需连接机械臂，其中 Windows 旧编码回归在其他系统跳过。控制器用模拟对象记录串口方法调用；主循环测试替换串口工厂、控制器和 sleep，不访问真实设备。
 
 覆盖内容：
 
@@ -22,18 +22,20 @@ python stararm102_ro.py --help
 - 重定向输出不周期刷屏、锁定与解除阈值一致性，以及 Windows CP1252 输出环境下中文帮助可用。
 - 主循环发送跟随目标、主臂读数失效时不下发新目标、正常循环退出释放串口。
 
-## B601-DM 增量验证
+## B601 官方 LeRobot 集成
 
-新增 38 项检查位于 `tests/test_b601.py`，覆盖关节正反映射、速度限制、力矩标尺、标准达妙串口帧、帧分包与缓存失效、模式/量程只读检查、故障保持与无跳变恢复、HD 按键归属，以及模拟硬件下的启动/退出/配对采集和端口异常清理。
+28 项检查位于 `tests/test_official_auto_feedback.py`，覆盖自动负载阻尼、官方坐标与夹爪比例、堵转锁定和恢复、不可靠 Leader/缺失从臂反馈、SDK 异常，以及不改动原动作、退出清理和安装器备份/恢复。
+
+本地另对下载的官方主循环源代码进行了钩子插入、语法编译和 AST 对比。测试没有导入完整 LeRobot 硬件环境，也没有打开串口。
 
 ```bash
-python stararm102_b601_dm.py --check
-python stararm102_b601_dm.py --simulate --simulate-stall-joint 0
+python -m pip install ./integrations/lerobot_auto_feedback
+python -m stararm_auto_feedback.install --help
 ```
 
 ## CI
 
-GitHub Actions 配置在 Ubuntu 和 Windows 上运行 Python 3.10 与 3.12，执行依赖安装、语法检查、62 项测试与命令行帮助。CI 结果以对应提交的 Actions 页面为准；配置覆盖的平台不等于已经完成实机适配。
+GitHub Actions 配置在 Ubuntu 和 Windows 上运行 Python 3.10 与 3.12，执行依赖安装、语法检查、52 项测试与命令行帮助。CI 结果以对应提交的 Actions 页面为准；配置覆盖的平台不等于已经完成实机适配。
 
 ## 当前验证状态
 

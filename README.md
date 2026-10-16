@@ -2,7 +2,7 @@
 
 StarArm 102 主从遥操作控制器，支持 StarArm 从臂电流反馈，以及 Seeed B601-DM 从臂力矩反馈，提供主臂阻尼、堵转检测与位置保持。
 
-StarArm 原入口保留单文件运行方式；601 入口复用 Leader 控制核心。调参、状态查询和锁定控制集中在终端，支持 102LD 和配有按键板的 102HD。
+StarArm 自家从臂保留原单文件控制程序；Seeed 601 使用官方 LeRobot 遥操作的自动反馈增强。
 
 ## 功能
 
@@ -15,25 +15,22 @@ StarArm 原入口保留单文件运行方式；601 入口复用 Leader 控制核
 
 电流反馈是负载的近似量，不是经过标定的末端力或力矩测量。
 
-## Seeed B601-DM 版本
+## Seeed B601-DM：增强官方 LeRobot 遥操作
 
-使用 StarArm Leader 控制 Seeed 601DM：从臂角度跟随、力矩负载反馈、堵转锁定、通信故障保持和配对标定均位于独立入口。
+在已经能运行官方遥操作的同一环境中安装：
 
 ```bash
-python stararm102_b601_dm.py --simulate
-python stararm102_b601_dm.py --simulate --simulate-stall-joint 0
+python -m pip install ./integrations/lerobot_auto_feedback
+python -m stararm_auto_feedback.install
 ```
 
-默认模拟模式不连接设备。实机需先核对电机模式、方向、零位、限位与负载标尺，详见 [601 完整教程与逻辑](docs/b601_dm.md)。示例配置未标定，真实设备尚未联调。
+然后继续使用原来的 `lerobot-teleoperate` 命令。自动加入 601 负载反馈阻尼与堵转时的 Leader 保持；不增加手动扭矩输入、不另开串口、不替换官方映射、驱动或遥操作循环。
 
-| 从臂 | 入口 | 反馈量 |
-|---|---|---|
-| StarArm 102 | `stararm102_ro.py` | 电流 mA |
-| Seeed B601-DM | `stararm102_b601_dm.py` | 估计力矩 Nm |
+[601 完整安装与逻辑说明](docs/b601_dm.md)。原独立 601 控制入口已移除。官方标定与设备配置继续沿用；实际阻尼和锁力尚未上机验证。
 
 ## StarArm 从臂快速开始
 
-以下操作对应 `stararm102_ro.py`；601 的实机配置和命令差异见上面的专用教程。
+以下操作和手动控制命令仅对应 StarArm 自家从臂的 `stararm102_ro.py`。Seeed 601 的官方 LeRobot 集成没有这套手动控制台。
 
 需要 Python 3.10+、主从机械臂、串口连接与设备供电。验证情况见 [测试说明](docs/testing.md)。
 
@@ -83,7 +80,7 @@ python stararm102_ro.py --leader_type 102HD
 
 | 文档 | 内容 |
 |---|---|
-| [601 版本教程与逻辑](docs/b601_dm.md) | Seeed B601-DM 配置、标定、模拟、实机入口与故障保持 |
+| [601 版本教程与逻辑](docs/b601_dm.md) | 官方 LeRobot 接入、自动反馈逻辑、参数与卸载 |
 | [安装与上机教程](docs/tutorial.md) | 接线、环境、端口、启动、基础验证和标定 |
 | [代码逻辑](docs/architecture.md) | 主循环、数据流、负载映射、堵转状态和锁力维护 |
 | [命令与参数](docs/reference.md) | 终端命令、启动参数和默认值 |
@@ -95,9 +92,8 @@ python stararm102_ro.py --leader_type 102HD
 
 ```text
 stararm102_ro.py          StarArm 从臂控制与 Leader 核心
-stararm102_b601_dm.py     Seeed B601-DM 入口
-b601_dm.py               达妙串口桥与关节映射
-configs/                 601 配置示例
+integrations/lerobot_auto_feedback/
+                         官方 LeRobot 自动反馈增强与参数示例
 requirements.txt         串口与舵机 SDK 依赖
 requirements-dev.txt     开发工具
 README.md

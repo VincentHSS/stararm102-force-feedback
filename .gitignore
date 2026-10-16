@@ -12,3 +12,7 @@ venv/
 Thumbs.db
 
 configs/*.local.json
+
+build/
+dist/
+*.egg-info/
