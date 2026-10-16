@@ -1,6 +1,9 @@
 import contextlib
 import importlib.util
 import io
+import os
+import subprocess
+import sys
 import struct
 import unittest
 from pathlib import Path
@@ -221,6 +224,18 @@ class ControlTests(unittest.TestCase):
         with contextlib.redirect_stdout(output):
             c.set_frequency("200Hz")
         self.assertEqual(output.getvalue(), "")
+
+    @unittest.skipUnless(os.name == "nt", "Windows legacy output encoding")
+    def test_windows_help_works_with_legacy_output_encoding(self):
+        env = dict(os.environ, PYTHONIOENCODING="cp1252", PYTHONUTF8="0")
+        result = subprocess.run(
+            [sys.executable, str(Path(m.__file__)), "--help"],
+            env=env,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr.decode("utf-8", errors="replace"))
+        self.assertIn("主从控制", result.stdout.decode("utf-8"))
 
     def test_threshold_change_preserves_hysteresis(self):
         g = m.StallGuard([0])

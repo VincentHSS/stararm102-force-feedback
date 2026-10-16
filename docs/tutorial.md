@@ -8,6 +8,13 @@
 
 ## 2. 安装环境
 
+先下载仓库，或执行：
+
+```bash
+git clone https://github.com/VincentHSS/stararm102-force-feedback.git
+cd stararm102-force-feedback
+```
+
 在仓库根目录执行：
 
 ```bash

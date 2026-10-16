@@ -1745,6 +1745,11 @@ def main(args):
 
 
 if __name__ == "__main__":
+    if os.name == "nt":
+        for stream in (sys.stdout, sys.stderr):
+            if hasattr(stream, "reconfigure"):
+                stream.reconfigure(encoding="utf-8", errors="replace")
+
     parser = argparse.ArgumentParser(description="StarArm 102 主从控制")
 
     parser.add_argument(
