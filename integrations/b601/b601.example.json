@@ -47,7 +47,8 @@
       "leader_home_deg": 0.0,
       "follower_home_rad": 0.0,
       "torque_reference_nm": 5,
-      "torque_deadband_nm": 0.2
+      "torque_deadband_nm": 0.2,
+      "motor_speed_deg_s": 100
     },
     {
       "leader_id": 1,
@@ -60,7 +61,8 @@
       "leader_home_deg": 0.0,
       "follower_home_rad": 0.0,
       "torque_reference_nm": 5,
-      "torque_deadband_nm": 0.2
+      "torque_deadband_nm": 0.2,
+      "motor_speed_deg_s": 100
     },
     {
       "leader_id": 2,
@@ -73,7 +75,8 @@
       "leader_home_deg": 0.0,
       "follower_home_rad": 0.0,
       "torque_reference_nm": 5,
-      "torque_deadband_nm": 0.2
+      "torque_deadband_nm": 0.2,
+      "motor_speed_deg_s": 100
     },
     {
       "leader_id": 3,
@@ -86,7 +89,8 @@
       "leader_home_deg": 0.0,
       "follower_home_rad": 0.0,
       "torque_reference_nm": 1,
-      "torque_deadband_nm": 0.1
+      "torque_deadband_nm": 0.1,
+      "motor_speed_deg_s": 100
     },
     {
       "leader_id": 4,
@@ -99,7 +103,8 @@
       "leader_home_deg": 0.0,
       "follower_home_rad": 0.0,
       "torque_reference_nm": 1,
-      "torque_deadband_nm": 0.1
+      "torque_deadband_nm": 0.1,
+      "motor_speed_deg_s": 100
     },
     {
       "leader_id": 5,
@@ -112,7 +117,8 @@
       "leader_home_deg": 0.0,
       "follower_home_rad": 0.0,
       "torque_reference_nm": 1,
-      "torque_deadband_nm": 0.1
+      "torque_deadband_nm": 0.1,
+      "motor_speed_deg_s": 100
     },
     {
       "leader_id": 6,
@@ -125,7 +131,8 @@
       "leader_home_deg": 0.0,
       "follower_home_rad": 0.0,
       "torque_reference_nm": 1,
-      "torque_deadband_nm": 0.1
+      "torque_deadband_nm": 0.1,
+      "motor_speed_deg_s": 150
     }
   ]
 }

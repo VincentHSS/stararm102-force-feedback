@@ -18,7 +18,7 @@ def write_all(uart, data):
 
 
 class Leader:
-    def __init__(self, uart, cfg, clock=time.monotonic, sleep=time.sleep):
+    def __init__(self, uart, cfg, clock=time.perf_counter, sleep=time.sleep):
         self.uart, self.cfg, self.clock, self.sleep = uart, cfg, clock, sleep
         self.buffer = bytearray()
         self.previous = {}
@@ -167,7 +167,7 @@ class State:
 
 
 class Follower:
-    def __init__(self, transport, cfg, clock=time.monotonic, sleep=time.sleep):
+    def __init__(self, transport, cfg, clock=time.perf_counter, sleep=time.sleep):
         self.transport, self.cfg, self.clock, self.sleep = transport, cfg, clock, sleep
         self.by_feedback = {j.feedback_id: j for j in cfg.joints}
         self.states, self.replies = {}, {}
@@ -232,7 +232,7 @@ class Follower:
                 raise LinkError("Invalid DM encoder scaling")
             if (
                 max(abs(math.radians(j.lower_deg)), abs(math.radians(j.upper_deg))) > limits[0]
-                or math.radians(j.speed_deg_s) > limits[1]
+                or math.radians(j.motor_speed) > limits[1]
             ):
                 raise LinkError("Configured limits exceed motor protocol range")
             self.limits[j.leader_id] = limits
@@ -254,7 +254,7 @@ class Follower:
                         allowed = math.radians(
                             5
                             + 2
-                            * self.cfg.joints[i].speed_deg_s
+                            * self.cfg.joints[i].motor_speed
                             * min(max(st.received_at - last, 0), 0.25)
                         )
                         if abs(st.pos - old) > allowed:
@@ -279,7 +279,8 @@ class Follower:
                 <= math.radians(j.upper_deg) + 1e-6
             ):
                 raise ValueError("Invalid/out-of-range command")
-            speed = math.radians(j.speed_deg_s)
+            # 目标轨迹仍按 speed_deg_s 限速；电机速度单独留出追赶位置误差的余量。
+            speed = math.radians(j.motor_speed)
             if j.leader_id == 6:
                 payload = struct.pack(
                     "<fHH", target, int(speed * 100), int(self.cfg.gripper_force_ratio * 10000)

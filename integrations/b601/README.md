@@ -4,6 +4,8 @@
 
 核心包括自适应滤波、输入死区、按时间限速、加速度与单帧步长限制、底载采样、自动阻尼、持续堵转保持、HD 按钮仲裁及通信故障处理。没有手动 LD 扭矩控制台。
 
+Windows 统一使用高精度 QPC 计时，避免旧版 Python 的 15.625 ms 时间量化。目标轨迹限速与电机追赶速度分开配置；参考轨迹增加到点制动和反转处理。运动目标只来自主臂输入，不追加从臂位置误差补偿。
+
 ```bash
 python -m pip install -r requirements.txt
 python teleop.py --simulate
@@ -33,4 +35,4 @@ python teleop.py --config paired.json --execute
 python -m unittest discover -s tests -v
 ```
 
-51 项无硬件测试；尚未在真实 B601-DM 上验证频率、延迟、阻尼和保持力度。底载处理不是完整重力补偿。
+58 项无硬件测试。Windows + 本机串口已实测约 90–95 Hz；真实运动延迟仍在现场调试，不能据此保证其他设备达到同一频率或已完成保持性能验证。底载处理不是完整重力补偿。

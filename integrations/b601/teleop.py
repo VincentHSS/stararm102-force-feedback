@@ -43,7 +43,7 @@ def bounded(cfg, states):
     ]
 
 
-def baseline(cfg, follower, targets, clock=time.monotonic, sleep=time.sleep):
+def baseline(cfg, follower, targets, clock=time.perf_counter, sleep=time.sleep):
     started, last_good = clock(), clock()
     rows = []
     while clock() - started < cfg.baseline_s:
@@ -76,7 +76,8 @@ def hardware(
     duration=0,
     serial_factory=None,
     socket_factory=SocketCAN,
-    clock=time.monotonic,
+    # Windows Python <=3.12 的 monotonic 可只有 15.625ms 精度；QPC 避免 dt=0/16ms。
+    clock=time.perf_counter,
     sleep=time.sleep,
 ):
     cfg.validate()
@@ -128,10 +129,10 @@ def hardware(
             ]
             if any(
                 abs(math.degrees((goal - actual) / j.direction)) > cfg.startup_error_deg
-                or not math.radians(j.lower_deg) <= goal <= math.radians(j.upper_deg)
                 for j, goal, actual in zip(cfg.joints, mapped, targets)
             ):
                 raise LinkError("Startup pose differs from captured pairing")
+            # 零位附近的微小漂移可以略超软限位；仍检查原始姿态误差，实际命令始终限位钳制。
             # 先登记所有清理动作，再使能；部分使能失败也会尝试逐个断使能。
             stack.callback(leader.release)
             stack.callback(follower.disable)
@@ -168,6 +169,10 @@ def hardware(
                 + [f"torque_j{i}_nm" for i in range(1, 8)]
                 + [f"baseline_j{i}_nm" for i in range(1, 8)]
                 + [f"load_j{i}" for i in range(1, 8)]
+                + [f"leader_j{i}_deg" for i in range(1, 8)]
+                + [f"filtered_j{i}_deg" for i in range(1, 8)]
+                + [f"desired_j{i}_rad" for i in range(1, 8)]
+                + [f"reference_j{i}_rad" for i in range(1, 8)]
             )
         logger.info("%s | Python UART/CAN | Ctrl+C to stop", "EXECUTE" if execute else "PREVIEW")
         started = last_tick = report = clock()
@@ -200,7 +205,13 @@ def hardware(
             actual = [s.pos for s in states] if states else [math.nan] * 7
             torques = [s.torque for s in states] if states else [math.nan] * 7
             error = (
-                max(abs(a - b) for a, b in zip(motion.inverse(targets), motion.inverse(actual)))
+                max(
+                    abs(a - b)
+                    for a, b in zip(
+                        motion.inverse(session.motion.commanded if session else targets),
+                        motion.inverse(actual),
+                    )
+                )
                 if states
                 else math.nan
             )
@@ -224,6 +235,14 @@ def hardware(
                         if session
                         else [math.nan] * 14
                     )
+                    + (list(lead[0]) if lead else [math.nan] * 7)
+                    + list((session.motion if session else motion).filtered or [math.nan] * 7)
+                    + (
+                        (session.motion if session else motion).forward(lead[0])
+                        if lead
+                        else [math.nan] * 7
+                    )
+                    + list(session.motion.commanded if session else targets)
                 )
             if work_end - report >= 2.0:
                 logger.info(

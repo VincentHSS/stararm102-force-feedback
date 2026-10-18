@@ -132,7 +132,7 @@ cd integrations/lumos
 python -m unittest discover -s tests -v
 ```
 
-B601 独立 Python 版的 51 项测试另行运行：
+B601 独立 Python 版的 58 项测试另行运行：
 
 ```bash
 # 从仓库根目录进入
@@ -140,4 +140,4 @@ cd integrations/b601
 python -m unittest discover -s tests -v
 ```
 
-共 137 项模拟测试；CI 在 Ubuntu / Windows、Python 3.10 / 3.12 上执行。详情见 [测试说明](docs/testing.md) 和 [变更记录](CHANGELOG.md)。第三方组件遵循各自许可。
+共 144 项模拟测试；CI 在 Ubuntu / Windows、Python 3.10 / 3.12 上执行。详情见 [测试说明](docs/testing.md) 和 [变更记录](CHANGELOG.md)。第三方组件遵循各自许可。

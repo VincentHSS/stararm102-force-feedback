@@ -55,16 +55,16 @@ python -m unittest discover -s tests -v
 python -S teleop.py --simulate
 ```
 
-新增 51 项，覆盖连续有效零位、缺包、校验错误、突跳、DM 模式与量程回读、夹爪 FORCE_POS 编码、滤波/运动限制、高空载底载、慢速正常跟随、持续堵转、故障锁存、只读采集/预览以及伪 UART/CAN 完整执行与清理。模拟在禁用第三方包的子进程中运行，确认不需要 LeRobot 或 MotorBridge SDK。
+新增 58 项，覆盖连续有效零位、缺包、校验错误、突跳、DM 模式与量程回读、夹爪 FORCE_POS 编码、滤波/运动限制、高空载底载、慢速正常跟随、持续堵转、故障锁存、只读采集/预览以及伪 UART/CAN 完整执行与清理。模拟在禁用第三方包的子进程中运行，确认不需要 LeRobot 或 MotorBridge SDK。
 
-测试保留了旧版 52 项、Lumos 34 项，加新 Python B601 51 项，共 137 项。
+测试保留了旧版 52 项、Lumos 34 项，加新 Python B601 58 项，共 144 项。
 
 ## CI 执行范围
 
-GitHub Actions 配置在 Ubuntu 和 Windows 上运行 Python 3.10 与 3.12，执行依赖安装、三种方案语法检查、三组共 137 项测试与命令行帮助。CI 结果以对应提交的 Actions 页面为准；配置覆盖的平台不等于已经完成实机适配。
+GitHub Actions 配置在 Ubuntu 和 Windows 上运行 Python 3.10 与 3.12，执行依赖安装、三种方案语法检查、三组共 144 项测试与命令行帮助。CI 结果以对应提交的 Actions 页面为准；配置覆盖的平台不等于已经完成实机适配。
 
 ## 当前验证状态
 
-本地回归在 Windows / Python 3.12 环境运行通过；SDK 使用 `fashionstar-uart-sdk==1.3.12`。未连接真实机械臂进行锁力、负载反馈或保护性能测试。
+本地回归在 Windows / Python 3.12 环境运行通过；原 StarArm 路径使用 `fashionstar-uart-sdk==1.3.12`。B601 直接 Python 路径不依赖该 SDK，现已完成 COM 串口只读通信与遥操作试运行，观察并处理了 Windows 计时量化及部分软件跟随延迟；仍未完成动态跟随、锁力、负载反馈或保护性能的系统实机验证。
 
 模拟测试验证软件决策和调用顺序，不验证 UART 电气通信、固件实际保持能力、供电裕量、机械限位或可安全承受的负载。首次上机需要按教程逐步验证并记录设备型号、固件版本、供电、参考电流和使用参数。

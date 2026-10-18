@@ -318,7 +318,7 @@ class NativeB601Tests(unittest.TestCase):
         self.assertEqual(can_id, 0x307)
         pos, speed, effort = struct.unpack("<fHH", data)
         self.assertAlmostEqual(pos, -0.3)
-        self.assertEqual(speed, int(math.radians(100) * 100))
+        self.assertEqual(speed, int(math.radians(self.cfg.joints[6].motor_speed) * 100))
         self.assertEqual(effort, 1000)
         self.assertEqual(self.can.sent[0][0], 0x101)
 
@@ -326,6 +326,31 @@ class NativeB601Tests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.follower.command([0.0] * 6 + [math.nan])
         self.assertEqual(self.can.sent, [])
+
+    def test_motor_catchup_speed_does_not_increase_target_trajectory_limit(self):
+        self.follower.command([0.0] * 7)
+        self.assertAlmostEqual(
+            struct.unpack("<ff", self.can.sent[0][1])[1], math.radians(100), places=6
+        )
+        motion = Motion(self.cfg, [0.0] * 7)
+        previous = 0.0
+        for _ in range(100):
+            target = motion.step([-140.0] + [0.0] * 6, 0.01)[0]
+            self.assertLessEqual(abs(target - previous), math.radians(50) * 0.01 + 1e-10)
+            previous = target
+
+    def test_legacy_config_without_motor_speed_keeps_existing_speed(self):
+        self.cfg.joints[0].motor_speed_deg_s = None
+        self.cfg.validate()
+        self.follower.command([0.0] * 7)
+        self.assertAlmostEqual(
+            struct.unpack("<ff", self.can.sent[0][1])[1], math.radians(50), places=6
+        )
+
+    def test_motor_speed_lower_than_trajectory_limit_is_rejected(self):
+        self.cfg.joints[0].motor_speed_deg_s = 20
+        with self.assertRaises(ValueError):
+            self.cfg.validate()
 
     def test_cleanup_disables_all_motors_even_when_one_write_fails(self):
         sent = []
@@ -362,6 +387,26 @@ class NativeB601Tests(unittest.TestCase):
             for j, value in zip(self.cfg.joints, targets):
                 self.assertGreaterEqual(value, math.radians(j.lower_deg))
                 self.assertLessEqual(value, math.radians(j.upper_deg))
+
+    def test_reversal_does_not_continue_commanding_in_old_direction(self):
+        motion = Motion(self.cfg, [0.0] * 7)
+        for _ in range(30):
+            motion.step([-80.0] + [0.0] * 6, 0.01)
+        old = motion.commanded[0]
+        # 用已在滤波输出后方的目标直接检查轨迹反转，滤波本身不参与此断言。
+        motion.filtered[0] = 0
+        motion.input_speed[0] = 0
+        command = motion.step([0.0] * 7, 0.01)[0]
+        self.assertLessEqual(command, old)
+
+    def test_stationary_goal_does_not_generate_self_oscillating_reference(self):
+        motion = Motion(self.cfg, [0.0] * 7)
+        samples = []
+        for _ in range(1000):
+            samples.append(motion.step([-30.0] + [0.0] * 6, 0.01)[0])
+        self.assertTrue(all(0 <= x <= math.radians(30) for x in samples))
+        self.assertTrue(all(b >= a - 1e-12 for a, b in zip(samples, samples[1:])))
+        self.assertAlmostEqual(samples[-1], math.radians(30))
 
     def test_motion_direction_and_home_roundtrip(self):
         self.cfg.joints[0].leader_home_deg = 3.0
@@ -579,6 +624,41 @@ class NativeB601Tests(unittest.TestCase):
         self.assertEqual(self.can.enabled, set())
         self.assertEqual(sum(data == b"\xff" * 7 + b"\xfd" for _, data in self.can.sent), 7)
         self.assertTrue(self.can.closed and self.leader_wire.closed)
+
+    def test_small_zero_drift_at_soft_limit_starts_with_bounded_commands(self):
+        self.cfg.calibration_verified = True
+        self.cfg.adapter = "socketcan"
+        self.cfg.baseline_s = 0.2
+        self.leader_wire.angles[1] = -0.1
+        hardware(
+            self.cfg,
+            execute=True,
+            duration=0.03,
+            serial_factory=lambda *a, **kw: self.leader_wire,
+            socket_factory=lambda _: self.can,
+            clock=self.clock,
+            sleep=self.clock.sleep,
+        )
+        positions = [
+            struct.unpack_from("<f", data)[0] for can_id, data in self.can.sent if can_id == 0x102
+        ]
+        self.assertTrue(positions)
+        self.assertTrue(all(p <= 0 for p in positions))
+
+    def test_large_startup_mismatch_still_blocks_enable(self):
+        self.cfg.calibration_verified = True
+        self.cfg.adapter = "socketcan"
+        self.leader_wire.angles[0] = -30
+        with self.assertRaisesRegex(LinkError, "Startup pose"):
+            hardware(
+                self.cfg,
+                execute=True,
+                serial_factory=lambda *a, **kw: self.leader_wire,
+                socket_factory=lambda _: self.can,
+                clock=self.clock,
+                sleep=self.clock.sleep,
+            )
+        self.assertFalse(any(data == b"\xff" * 7 + b"\xfc" for _, data in self.can.sent))
 
     def test_second_port_failure_closes_first_without_motion(self):
         factory = Mock(side_effect=[self.leader_wire, OSError("port busy")])

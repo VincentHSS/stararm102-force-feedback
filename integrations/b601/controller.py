@@ -63,7 +63,14 @@ class Motion:
                 continue
             # 按真实 dt 限速、限制加速度，并封顶单帧步长；长停顿不会授权追赶大步。
             vmax = math.radians(j.speed_deg_s)
-            wanted = max(-vmax, min(vmax, (goal - old) / dt))
+            distance = goal - old
+            # 目标反转时取消旧方向的虚拟速度，避免软件参考继续朝用户反方向移动。
+            if self.velocity[i] * distance < 0:
+                self.velocity[i] = 0.0
+            braking_speed = math.sqrt(
+                2 * math.radians(self.cfg.acceleration_deg_s2) * abs(distance)
+            )
+            wanted = math.copysign(min(vmax, braking_speed), distance) if distance else 0.0
             accel = math.radians(self.cfg.acceleration_deg_s2) * dt
             velocity = self.velocity[i] + max(-accel, min(accel, wanted - self.velocity[i]))
             step = max(

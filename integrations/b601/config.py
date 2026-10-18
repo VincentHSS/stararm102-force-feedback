@@ -31,6 +31,11 @@ class Joint:
     follower_home_rad: float = 0.0
     torque_reference_nm: float = 5.0
     torque_deadband_nm: float = 0.2
+    motor_speed_deg_s: float | None = None
+
+    @property
+    def motor_speed(self):
+        return self.speed_deg_s if self.motor_speed_deg_s is None else self.motor_speed_deg_s
 
 
 def default_joints():
@@ -44,6 +49,7 @@ def default_joints():
             directions[i],
             *limits[i],
             speed_deg_s=100 if i == 6 else 50,
+            motor_speed_deg_s=150 if i == 6 else 100,
             torque_reference_nm=5 if i < 3 else 1,
             torque_deadband_nm=0.2 if i < 3 else 0.1,
         )
@@ -172,7 +178,8 @@ class Config:
         for j in self.joints:
             if any(
                 isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v)
-                for v in vars(j).values()
+                for key, v in vars(j).items()
+                if key != "motor_speed_deg_s" or v is not None
             ):
                 raise ValueError("Joint values must be finite numbers")
             if (
@@ -182,7 +189,7 @@ class Config:
             ):
                 raise ValueError("Invalid direction, limits or home pose")
             if (
-                not 0 < j.speed_deg_s <= 360
+                not 0 < j.speed_deg_s <= j.motor_speed <= 360
                 or j.torque_deadband_nm < 0
                 or j.torque_reference_nm <= j.torque_deadband_nm
             ):
