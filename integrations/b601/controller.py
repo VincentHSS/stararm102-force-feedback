@@ -93,6 +93,7 @@ class Feedback:
         self.baseline = [0.0] * 7
         self.torque = [0.0] * 7
         self.loads = [0.0] * 7
+        self.haptic_loads = None
         self.triggers = set()
         self.windows, self.counts, self.release_since = {}, {}, {}
         self.sent = {}
@@ -181,7 +182,8 @@ class Feedback:
                 if hold
                 else round(
                     self.cfg.power_min_mw
-                    + self.loads[i] * (self.cfg.power_max_mw - self.cfg.power_min_mw)
+                    + (self.loads if self.haptic_loads is None else self.haptic_loads)[i]
+                    * (self.cfg.power_max_mw - self.cfg.power_min_mw)
                 )
             )
             previous = self.sent.get(i)
@@ -207,11 +209,27 @@ class Feedback:
 
 
 class Session:
-    def __init__(self, cfg, leader, follower, initial, now, baseline=None):
+    def __init__(
+        self,
+        cfg,
+        leader,
+        follower,
+        initial,
+        now,
+        baseline=None,
+        payload_observer=None,
+        calibrating=False,
+    ):
         self.cfg, self.follower = cfg, follower
         self.motion = Motion(cfg, [s.pos for s in initial])
         self.feedback = Feedback(cfg, leader)
         self.feedback.prime([s.torque for s in initial] if baseline is None else baseline)
+        self.payload = payload_observer
+        self.calibrating = calibrating
+        if cfg.feedback_mode == "payload" and not calibrating and self.payload is None:
+            raise ValueError("Payload mode requires a validated observer before enabling motors")
+        if self.payload is not None or calibrating:
+            self.feedback.haptic_loads = [0.0] * 7
         self.last_sequences = [s.sequence for s in initial]
         self.last_good = self.last_tick = now
         self.fault = False
@@ -247,6 +265,9 @@ class Session:
         if not valid:
             self.rejected += 1
             self.feedback.interrupt()
+            if self.payload is not None:
+                self.payload.gap(now)
+                self.feedback.haptic_loads = list(self.payload.loads)
             if now - self.last_good >= self.cfg.link_timeout_s:
                 self.fail("feedback timeout" + (f": {invalid_reason}" if invalid_reason else ""))
             # 本轮无完整反馈就不发送新目标；仅持续超时才请求 Leader 保持并锁存故障。
@@ -269,6 +290,11 @@ class Session:
         target = self.motion.inverse(self.motion.commanded)
         actual = self.motion.inverse([s.pos for s in states])
         self.feedback.observe(target, actual, [s.torque for s in states], now, pressed)
+        if self.payload is not None:
+            self.payload.update(
+                [s.pos for s in states], [s.vel for s in states], [s.torque for s in states], now
+            )
+            self.feedback.haptic_loads = list(self.payload.loads)
         self.feedback.apply(now, pressed)
         held = True if self.feedback.triggers else (range(6) if pressed else False)
         command = self.motion.step(angles, dt, held=held)

@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import copy
 import csv
+import json
 import logging
 import math
 import statistics
@@ -73,6 +74,7 @@ def hardware(
     execute=False,
     capture=None,
     diagnostics=None,
+    collect_unloaded=False,
     duration=0,
     serial_factory=None,
     socket_factory=SocketCAN,
@@ -87,6 +89,22 @@ def hardware(
         )
     if capture is not None and Path(capture).exists():
         raise FileExistsError(f"Capture output already exists: {capture}")
+    observer = None
+    if collect_unloaded:
+        if not execute or diagnostics is None or capture is not None:
+            raise ValueError("Unloaded collection requires execute, a new CSV and no pose capture")
+        path = Path(diagnostics)
+        metadata_path = path.with_suffix(path.suffix + ".meta.json")
+        if path.exists() or metadata_path.exists():
+            raise FileExistsError("Unloaded collection must use new CSV and metadata paths")
+        from payload import signature
+
+        path.parent.mkdir(parents=True, exist_ok=True)
+    elif cfg.feedback_mode == "payload" and capture is None:
+        from payload import Calibration, PayloadObserver
+
+        # 标定、模型文件与配对签名都在打开设备前校验。
+        observer = PayloadObserver(cfg, Calibration.load(cfg.payload_calibration, cfg))
     if serial_factory is None:
         from serial import Serial
 
@@ -144,14 +162,32 @@ def hardware(
             tare = baseline(cfg, follower, targets, clock, sleep)
             initial = follower.read()
             check_states(cfg, initial, enabled=True)
-            session = Session(cfg, leader, follower, initial, clock(), baseline=tare)
+            session = Session(
+                cfg,
+                leader,
+                follower,
+                initial,
+                clock(),
+                baseline=tare,
+                payload_observer=observer,
+                calibrating=collect_unloaded,
+            )
         else:
             session = None
         stream, writer = None, None
         if diagnostics is not None:
             path = Path(diagnostics)
             path.parent.mkdir(parents=True, exist_ok=True)
-            stream = stack.enter_context(path.open("w", encoding="utf-8", newline=""))
+            stream = stack.enter_context(
+                path.open("x" if collect_unloaded else "w", encoding="utf-8", newline="")
+            )
+            if collect_unloaded:
+                with metadata_path.open("x", encoding="utf-8") as metadata_stream:
+                    json.dump(
+                        {"confirmed_unloaded": True, "config_signature": signature(cfg)},
+                        metadata_stream,
+                        indent=2,
+                    )
             writer = csv.writer(stream)
             writer.writerow(
                 [
@@ -174,6 +210,17 @@ def hardware(
                 + [f"desired_j{i}_rad" for i in range(1, 8)]
                 + [f"reference_j{i}_rad" for i in range(1, 8)]
                 + ["leader_valid", "follower_valid", "fault_reason"]
+                + [f"velocity_j{i}_rad_s" for i in range(1, 8)]
+                + [
+                    "unloaded_collection",
+                    "payload_kg",
+                    "payload_raw_kg",
+                    "payload_status",
+                    "payload_fit_score",
+                    "payload_sigma_kg",
+                ]
+                + [f"external_j{i}_nm" for i in range(1, 7)]
+                + [f"haptic_j{i}" for i in range(1, 8)]
             )
         logger.info("%s | Python UART/CAN | Ctrl+C to stop", "EXECUTE" if execute else "PREVIEW")
         started = last_tick = report = clock()
@@ -204,6 +251,15 @@ def hardware(
                 if valid:
                     check_states(cfg, states)
                     targets = motion.step(lead[0], dt)
+                    if observer is not None:
+                        observer.update(
+                            [s.pos for s in states],
+                            [s.vel for s in states],
+                            [s.torque for s in states],
+                            now,
+                        )
+                elif observer is not None:
+                    observer.gap(now)
             work_end = clock()
             loops += 1
             actual = [s.pos for s in states] if states else [math.nan] * 7
@@ -252,14 +308,44 @@ def hardware(
                         int(states is not None),
                         session.fault_reason if session else "",
                     ]
+                    + ([s.vel for s in states] if states else [math.nan] * 7)
+                    + [int(collect_unloaded)]
+                    + (
+                        [
+                            observer.mass_kg,
+                            observer.raw_mass_kg,
+                            observer.status,
+                            observer.score,
+                            observer.sigma_kg,
+                        ]
+                        if observer
+                        else [
+                            math.nan,
+                            math.nan,
+                            "unloaded collection" if collect_unloaded else "legacy",
+                            math.nan,
+                            math.nan,
+                        ]
+                    )
+                    + (observer.residual_nm if observer else [math.nan] * 6)
+                    + (
+                        observer.loads
+                        if observer
+                        else (
+                            [0.0] * 7
+                            if collect_unloaded
+                            else (session.feedback.loads if session else [math.nan] * 7)
+                        )
+                    )
                 )
             if work_end - report >= 2.0:
                 logger.info(
-                    "%s loop=%.1fHz sent=%.1fHz error=%.1fdeg",
+                    "%s loop=%.1fHz sent=%.1fHz error=%.1fdeg%s",
                     state,
                     loops / (work_end - report),
                     sent / (work_end - report),
                     error,
+                    f" payload={observer.mass_kg:.2f}kg ({observer.status})" if observer else "",
                 )
                 loops = sent = 0
                 report = work_end
@@ -282,11 +368,12 @@ class SimLeader:
 
 
 class SimFollower:
-    def __init__(self, cfg, stalled=None):
+    def __init__(self, cfg, stalled=None, calibration=None, payload_kg=0.0):
         self.cfg, self.stalled = cfg, stalled
         self.positions = [j.follower_home_rad for j in cfg.joints]
         self.targets = list(self.positions)
         self.sequence = 0
+        self.calibration, self.payload_kg = calibration, payload_kg
 
     def command(self, targets):
         self.targets = list(targets)
@@ -301,12 +388,38 @@ class SimFollower:
                 self.positions[i] += 0.3 * (target - position)
             self.sequence += 1
             result.append(State(self.positions[i], 0, torque, 1, 25, 25, now, self.sequence))
+        if self.calibration is not None:
+            from gravity import dot
+            from payload import friction_features
+
+            values = self.calibration.model.evaluate(self.positions[:6])
+            for i in range(6):
+                row, old = self.calibration.coefficients[i], result[i]
+                torque = (
+                    dot(row, friction_features(values["gravity"][i], 0))
+                    + row[1] * self.payload_kg * values["unit_mass"][i]
+                )
+                if i == self.stalled:
+                    torque += self.cfg.joints[i].torque_reference_nm
+                result[i] = State(old.pos, 0, torque, 1, 25, 25, now, old.sequence)
         return result
 
 
-def simulate(cfg, duration=5, stalled=None):
-    leader, follower = SimLeader(), SimFollower(cfg, stalled)
-    session = Session(cfg, leader, follower, follower.states(0), 0, baseline=[0.1] * 7)
+def simulate(cfg, duration=5, stalled=None, payload_kg=0.0):
+    observer, calibration = None, None
+    if cfg.feedback_mode == "payload":
+        from payload import Calibration, PayloadObserver
+
+        calibration = Calibration.load(cfg.payload_calibration, cfg)
+        observer = PayloadObserver(cfg, calibration)
+    elif payload_kg:
+        raise ValueError(
+            "Payload simulation needs a payload configuration and validated calibration"
+        )
+    leader, follower = SimLeader(), SimFollower(cfg, stalled, calibration, payload_kg)
+    session = Session(
+        cfg, leader, follower, follower.states(0), 0, baseline=[0.1] * 7, payload_observer=observer
+    )
     dt = 1 / cfg.loop_hz
     for tick in range(1, int(duration / dt) + 1):
         now = tick * dt
@@ -319,6 +432,13 @@ def simulate(cfg, duration=5, stalled=None):
         session.feedback.state,
         sorted(session.feedback.triggers),
     )
+    if observer:
+        logger.info(
+            "Payload simulation: input=%.2fkg estimate=%.2fkg | %s",
+            payload_kg,
+            observer.mass_kg,
+            observer.status,
+        )
     return session
 
 
@@ -343,22 +463,48 @@ def main(argv=None):
         "--duration", type=float, default=0, help="Runtime seconds; simulation defaults to 5"
     )
     parser.add_argument("--diagnostics-file", type=Path)
+    parser.add_argument(
+        "--collect-unloaded",
+        type=Path,
+        help="Collect a new explicitly unloaded CSV while following; requires --execute --confirm-unloaded",
+    )
+    parser.add_argument(
+        "--confirm-unloaded",
+        action="store_true",
+        help="Confirm empty gripper, no object/contact; collection suppresses ordinary damping",
+    )
+    parser.add_argument("--simulate-payload-kg", type=float, default=0.0)
     args = parser.parse_args(argv)
     if not math.isfinite(args.duration) or args.duration < 0:
         parser.error("duration must be finite and nonnegative")
     if args.simulate_stall is not None and not args.simulate:
         parser.error("--simulate-stall requires --simulate")
+    if args.collect_unloaded is not None and (
+        not args.execute or not args.confirm_unloaded or args.diagnostics_file is not None
+    ):
+        parser.error(
+            "--collect-unloaded requires --execute --confirm-unloaded; do not also set --diagnostics-file"
+        )
+    if args.confirm_unloaded and args.collect_unloaded is None:
+        parser.error("--confirm-unloaded requires --collect-unloaded")
+    if (
+        not math.isfinite(args.simulate_payload_kg)
+        or not 0 <= args.simulate_payload_kg <= 2
+        or (args.simulate_payload_kg and not args.simulate)
+    ):
+        parser.error("--simulate-payload-kg requires --simulate and a mass within 0..2kg")
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     try:
         cfg = Config.load(args.config)
         if args.simulate:
-            simulate(cfg, args.duration or 5, args.simulate_stall)
+            simulate(cfg, args.duration or 5, args.simulate_stall, args.simulate_payload_kg)
         else:
             hardware(
                 cfg,
                 execute=args.execute,
                 capture=args.capture,
-                diagnostics=args.diagnostics_file,
+                diagnostics=args.collect_unloaded or args.diagnostics_file,
+                collect_unloaded=args.collect_unloaded is not None,
                 duration=args.duration,
             )
         return 0

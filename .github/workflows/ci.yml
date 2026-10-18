@@ -39,6 +39,7 @@ jobs:
       - name: Check B601 direct entry and simulation
         run: |
           python integrations/b601/teleop.py --help
+          python -S integrations/b601/payload_tools.py --help
           python -S integrations/b601/teleop.py --simulate --duration 0.2
       - name: Check command line help
         run: python stararm102_ro.py --help

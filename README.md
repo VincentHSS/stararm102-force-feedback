@@ -60,6 +60,8 @@ python stararm102_ro.py --leader_type 102HD
 
 ## 方案二：Seeed B601-DM，独立 Python 遥操作
 
+新增[自重扣除与物体负载反馈](docs/b601_payload.md)：按姿态扣除本体自重和低速摩擦后联合估计额外负载，需两轮空载标定与验证；目前软件已实现，尚未完成本机实机验收。此前展示包仍采用兼容反馈路径。
+
 对应 `integrations/b601/`，直接读取 Leader UART，使用达妙串口桥或 SocketCAN 控制 B601。无需 LeRobot、MotorBridge 或那个零位修复 wheel：
 
 ```bash
@@ -132,7 +134,7 @@ cd integrations/lumos
 python -m unittest discover -s tests -v
 ```
 
-B601 独立 Python 版的 58 项测试另行运行：
+B601 独立 Python 版的 88 项测试另行运行：
 
 ```bash
 # 从仓库根目录进入
@@ -140,4 +142,4 @@ cd integrations/b601
 python -m unittest discover -s tests -v
 ```
 
-共 144 项模拟测试；CI 在 Ubuntu / Windows、Python 3.10 / 3.12 上执行。详情见 [测试说明](docs/testing.md) 和 [变更记录](CHANGELOG.md)。第三方组件遵循各自许可。
+共 174 项模拟测试；CI 在 Ubuntu / Windows、Python 3.10 / 3.12 上执行。详情见 [测试说明](docs/testing.md) 和 [变更记录](CHANGELOG.md)。第三方组件遵循各自许可。

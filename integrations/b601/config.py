@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 
@@ -95,6 +96,14 @@ class Config:
     release_stable_s: float = 0.4
     gripper_force_ratio: float = 0.1
     motor_temperature_c: float = 80.0
+    feedback_mode: str = "legacy"
+    payload_calibration: str = ""
+    payload_reference_kg: float = 0.75
+    payload_max_speed_rad_s: float = 0.25
+    payload_max_accel_rad_s2: float = 0.6
+    payload_hold_s: float = 1.0
+    payload_smoothing_s: float = 0.25
+    payload_haptic_weights: list[float] = field(default_factory=lambda: [0, 1, 1, 0.35, 0, 0, 0])
     joints: list[Joint] = field(default_factory=default_joints)
 
     def validate(self):
@@ -109,7 +118,12 @@ class Config:
         if self.leader_port.casefold() == self.follower_port.casefold():
             raise ValueError("Leader and follower must use different ports")
         for key, value in vars(self).items():
-            if key in ("joints", "calibration_verified", "button_id") or isinstance(value, str):
+            if key in (
+                "joints",
+                "calibration_verified",
+                "button_id",
+                "payload_haptic_weights",
+            ) or isinstance(value, str):
                 continue
             if (
                 isinstance(value, bool)
@@ -164,6 +178,32 @@ class Config:
             raise ValueError("Invalid observation/baseline interval")
         if not 0 < self.gripper_force_ratio <= 1 or not 1 <= self.startup_error_deg <= 20:
             raise ValueError("Invalid gripper force ratio or startup error")
+        if self.feedback_mode not in ("legacy", "payload") or not isinstance(
+            self.payload_calibration, str
+        ):
+            raise ValueError("feedback_mode must be legacy or payload")
+        if self.feedback_mode == "payload" and not self.payload_calibration.strip():
+            raise ValueError("Payload feedback needs a validated unloaded calibration file")
+        if (
+            not 0.2 < self.payload_reference_kg <= 2
+            or not 0 < self.payload_max_speed_rad_s <= 0.5
+            or not 0 < self.payload_max_accel_rad_s2 <= 1
+        ):
+            raise ValueError("Invalid payload scale or quasi-static motion limits")
+        if not 0 <= self.payload_hold_s <= 2 or not 0.05 <= self.payload_smoothing_s <= 2:
+            raise ValueError("Invalid payload estimate hold/smoothing interval")
+        if (
+            not isinstance(self.payload_haptic_weights, list)
+            or len(self.payload_haptic_weights) != 7
+            or any(
+                isinstance(v, bool)
+                or not isinstance(v, (int, float))
+                or not math.isfinite(v)
+                or not 0 <= v <= 1
+                for v in self.payload_haptic_weights
+            )
+        ):
+            raise ValueError("Expected seven payload haptic weights within 0..1")
         if len(self.joints) != 7 or [j.leader_id for j in self.joints] != list(range(7)):
             raise ValueError("Joint rows must be ordered by Leader ID 0..6")
         for attr in ("motor_id", "feedback_id"):
@@ -203,10 +243,22 @@ class Config:
             raise ValueError("Unknown configuration keys")
         if "joints" in values:
             values["joints"] = [Joint(**j) for j in values["joints"]]
+        if values.get("payload_calibration"):
+            values["payload_calibration"] = str(
+                (Path(path).resolve().parent / values["payload_calibration"]).resolve()
+            )
         return cls(**values).validate()
 
     def save(self, path):
         self.validate()
+        values = asdict(self)
+        if self.payload_calibration and Path(self.payload_calibration).is_absolute():
+            try:
+                values["payload_calibration"] = os.path.relpath(
+                    self.payload_calibration, Path(path).resolve().parent
+                )
+            except ValueError:
+                pass
         Path(path).write_text(
-            json.dumps(asdict(self), ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+            json.dumps(values, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
         )

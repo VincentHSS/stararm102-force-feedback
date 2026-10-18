@@ -35,6 +35,22 @@
   "release_stable_s": 0.4,
   "gripper_force_ratio": 0.1,
   "motor_temperature_c": 80.0,
+  "feedback_mode": "legacy",
+  "payload_calibration": "",
+  "payload_reference_kg": 0.75,
+  "payload_max_speed_rad_s": 0.25,
+  "payload_max_accel_rad_s2": 0.6,
+  "payload_hold_s": 1.0,
+  "payload_smoothing_s": 0.25,
+  "payload_haptic_weights": [
+    0,
+    1,
+    1,
+    0.35,
+    0,
+    0,
+    0
+  ],
   "joints": [
     {
       "leader_id": 0,
