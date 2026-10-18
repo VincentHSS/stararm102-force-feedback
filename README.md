@@ -7,7 +7,7 @@
 | 方案 | 主臂 → 从臂 | 负载来源 | 运行方式 | 代码入口 | 教程 |
 | --- | --- | --- | --- | --- | --- |
 | **一：自家 StarArm-102** | StarArm-102 → StarArm-102，可配置多个从臂 | 舵机电流 mA | 直接运行脚本，保留原有手动控制台 | [`stararm102_ro.py`](stararm102_ro.py) | [StarArm 教程](docs/tutorial.md) |
-| **二：Seeed B601-DM** | StarArm-102 → Seeed B601-DM | DM 电机估计力矩 Nm | 增强官方 `lerobot-teleoperate`，继续使用原命令 | [`integrations/lerobot_auto_feedback/`](integrations/lerobot_auto_feedback/) | [B601-DM 教程](docs/b601_dm.md) |
+| **二：Seeed B601-DM** | StarArm-102 → Seeed B601-DM | DM 电机估计力矩 Nm | 独立 Python，直接 UART/CAN；无需 LeRobot | [`integrations/b601/`](integrations/b601/) | [B601-DM 教程](docs/b601_dm.md) |
 | **三：Lumos 优化版** | StarArm-102 → Lumos 单臂及可选夹爪 | SDK 关节/夹爪力矩 Nm | 本仓库内独立的 Python 遥操作版本 | [`integrations/lumos/`](integrations/lumos/) | [Lumos 教程](docs/lumos.md) |
 
 三种方案都提供自动负载阻尼和堵转保持，但驱动、映射和配置不能混用。**B601-DM 与 Lumos 不需要运行时手动输入 LD 扭矩。**
@@ -58,20 +58,27 @@ python stararm102_ro.py --leader_type 102HD
 
 [完整教程](docs/tutorial.md) · [代码逻辑](docs/architecture.md) · [命令与参数](docs/reference.md) · [故障排查](docs/troubleshooting.md)
 
-## 方案二：Seeed B601-DM，增强官方 LeRobot 遥操作
+## 方案二：Seeed B601-DM，独立 Python 遥操作
 
-对应 `integrations/lerobot_auto_feedback/`。先确保官方遥操作可以运行，再在同一 Python/Conda 环境、仓库根目录执行：
+对应 `integrations/b601/`，直接读取 Leader UART，使用达妙串口桥或 SocketCAN 控制 B601。无需 LeRobot、MotorBridge 或那个零位修复 wheel：
 
 ```bash
-python -m pip install ./integrations/lerobot_auto_feedback
-python -m stararm_auto_feedback.install
+cd integrations/b601
+python -m pip install -r requirements.txt
+python teleop.py --simulate
+cp b601.example.json my_b601.json
+# 编辑端口/CAN 配置，摆好两臂参考姿态后采集
+python teleop.py --config my_b601.json --capture paired.json
+python teleop.py --config paired.json
+# 核对方向、限位与配对姿态，在 paired.json 设置 calibration_verified=true
+python teleop.py --config paired.json --execute
 ```
 
-之后继续运行你原来的 `lerobot-teleoperate` 命令。安装器在官方发送动作后加入自动反馈，沿用官方设备连接、标定、关节映射、限位、相机和退出流程。
+包含自适应滤波、输入死区、按时间限速、加速度和单帧步长限制，以及负载底载采样。连续零位的新回包有效；保留校验、丢包、突跳检查。默认映射来自官方配置，但配对姿态单独采集，不重置电机零位。
 
-自动读取 B601-DM 负载并调节 Leader 阻尼，堵转时请求保持，误差持续恢复后回到阻尼。不另开串口、不新增独立遥操作循环，也不增加手动扭矩控制台。
+堵转必须满足大角差、超出底载的持续负载、实际无进展及连续观察窗口；正常追赶不再仅因跟随比例低就锁住。短暂丢包跳过运动帧，持续超时才保持并锁存故障。自动阻尼、堵转恢复与 HD 仲裁均无需手动输入扭矩。
 
-核心代码：[`controller.py`](integrations/lerobot_auto_feedback/stararm_auto_feedback/controller.py)，含关键逻辑中文注释。参数文件、安装与卸载方式见 [B601-DM 教程](docs/b601_dm.md)。此方案只挂接 `lerobot-teleoperate`；不要用方案一的脚本控制 B601-DM。
+核心代码：[`controller.py`](integrations/b601/controller.py)；通信与零位处理：[`bus.py`](integrations/b601/bus.py)，均含关键中文注释。配对、预览、执行、参数与 CSV 诊断见 [B601-DM 教程](docs/b601_dm.md)。旧 LeRobot 插件仅保留为 [历史存档与卸载参考](docs/b601_lerobot_legacy.md)，不要与新入口同时运行。
 
 ## 方案三：Lumos 优化版，独立保存在本仓库
 
@@ -111,7 +118,7 @@ Leader 保持不是从臂急停；实际保持能力取决于固件、供电及�
 
 ## 开发验证
 
-在仓库根目录运行 StarArm 与 B601-DM 的 52 项测试：
+在仓库根目录运行 StarArm 与历史 B601 插件的 52 项测试：
 
 ```bash
 python -m pip install -r requirements.txt
@@ -125,4 +132,12 @@ cd integrations/lumos
 python -m unittest discover -s tests -v
 ```
 
-共 86 项模拟测试；CI 在 Ubuntu / Windows、Python 3.10 / 3.12 上执行。详情见 [测试说明](docs/testing.md) 和 [变更记录](CHANGELOG.md)。第三方 SDK 组件遵循各自许可。
+B601 独立 Python 版的 51 项测试另行运行：
+
+```bash
+# 从仓库根目录进入
+cd integrations/b601
+python -m unittest discover -s tests -v
+```
+
+共 137 项模拟测试；CI 在 Ubuntu / Windows、Python 3.10 / 3.12 上执行。详情见 [测试说明](docs/testing.md) 和 [变更记录](CHANGELOG.md)。第三方组件遵循各自许可。

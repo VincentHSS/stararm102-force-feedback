@@ -1,6 +1,6 @@
 # Lumos 自动反馈优化版
 
-本目录是 `stararm102-force-feedback` 的第三种方案：StarArm-102 Leader → Lumos 单臂。与本仓库的自家 StarArm 从臂、B601-DM 官方 LeRobot 集成分开运行。
+本目录是 `stararm102-force-feedback` 的第三种方案：StarArm-102 Leader → Lumos 单臂。与本仓库的自家 StarArm 从臂、B601-DM 独立 Python 版分开运行。
 
 优化代码只保存在本目录，原 `VincentHSS/stararm102-lumos-teleop` 仓库保留原有版本。
 

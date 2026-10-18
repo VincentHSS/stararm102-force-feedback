@@ -22,7 +22,9 @@ python stararm102_ro.py --help
 - 重定向输出不周期刷屏、锁定与解除阈值一致性，以及 Windows CP1252 输出环境下中文帮助可用。
 - 主循环发送跟随目标、主臂读数失效时不下发新目标、正常循环退出释放串口。
 
-## B601 官方 LeRobot 集成
+## B601 历史 LeRobot 集成
+
+以下 28 项保留用于旧版兼容和卸载器验证。当前 B601 推荐直接 Python 入口，见下方独立 Python 版一节。
 
 28 项检查位于 `tests/test_official_auto_feedback.py`，覆盖自动负载阻尼、官方坐标与夹爪比例、堵转锁定和恢复、不可靠 Leader/缺失从臂反馈、SDK 异常，以及不改动原动作、退出清理和安装器备份/恢复。
 
@@ -33,7 +35,7 @@ python -m pip install ./integrations/lerobot_auto_feedback
 python -m stararm_auto_feedback.install --help
 ```
 
-## CI
+## Lumos 独立优化版
 
 Lumos 优化版另外有 34 项模拟测试，代码仅维护在本力反馈仓库的 `integrations/lumos/`，不放入原 Lumos 仓库。运行方式：
 
@@ -44,7 +46,22 @@ python -m unittest discover -s tests -v
 
 覆盖负载阻尼、堵转窗口、稳定恢复、反向运动、HD 仲裁、夹爪反馈新鲜度、异常时暂停新目标及退出清理。根目录 52 项加 Lumos 34 项，共 86 项。
 
-GitHub Actions 配置在 Ubuntu 和 Windows 上运行 Python 3.10 与 3.12，执行依赖安装、三种方案语法检查、两组共 86 项测试与命令行帮助。CI 结果以对应提交的 Actions 页面为准；配置覆盖的平台不等于已经完成实机适配。
+## B601 独立 Python 版
+
+```bash
+# 从仓库根目录进入
+cd integrations/b601
+python -m unittest discover -s tests -v
+python -S teleop.py --simulate
+```
+
+新增 51 项，覆盖连续有效零位、缺包、校验错误、突跳、DM 模式与量程回读、夹爪 FORCE_POS 编码、滤波/运动限制、高空载底载、慢速正常跟随、持续堵转、故障锁存、只读采集/预览以及伪 UART/CAN 完整执行与清理。模拟在禁用第三方包的子进程中运行，确认不需要 LeRobot 或 MotorBridge SDK。
+
+测试保留了旧版 52 项、Lumos 34 项，加新 Python B601 51 项，共 137 项。
+
+## CI 执行范围
+
+GitHub Actions 配置在 Ubuntu 和 Windows 上运行 Python 3.10 与 3.12，执行依赖安装、三种方案语法检查、三组共 137 项测试与命令行帮助。CI 结果以对应提交的 Actions 页面为准；配置覆盖的平台不等于已经完成实机适配。
 
 ## 当前验证状态
 
