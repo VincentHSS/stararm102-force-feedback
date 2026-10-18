@@ -20,6 +20,7 @@ from payload import (
     Calibration,
     MotionSignals,
     friction_features,
+    interior_pose,
     signature,
     vertical_fit,
 )
@@ -107,12 +108,7 @@ def load_samples(path, cfg):
                     continue
                 if now - last_sample < 0.05:
                     continue
-                if any(
-                    not math.radians(j.lower_deg) - 0.002
-                    <= value
-                    <= math.radians(j.upper_deg) + 0.002
-                    for value, j in zip(q, cfg.joints)
-                ):
+                if not interior_pose(cfg, q):
                     continue
                 result.append({"q": q, "v": list(signals.velocity), "tau": tau})
                 last_sample = now
@@ -124,9 +120,11 @@ def load_samples(path, cfg):
 
 
 def fit_profile(training, validation, model, cfg):
+    training = [row for row in training if interior_pose(cfg, row["q"])]
+    validation = [row for row in validation if interior_pose(cfg, row["q"])]
     if len(training) < 120 or len(validation) < 80:
         raise ValueError(
-            "Need at least 120 training and 80 separate validation samples after motion filtering"
+            "Need at least 120 training and 80 separate validation samples after motion/limit filtering"
         )
     for name, samples in (("training", training), ("validation", validation)):
         for i in (1, 2):

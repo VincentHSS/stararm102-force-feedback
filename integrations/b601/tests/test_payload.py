@@ -200,6 +200,50 @@ class PayloadTests(unittest.TestCase):
         self.assertEqual(observer.status, "outside calibration")
         self.assertEqual(observer.loads, [0.0] * 7)
 
+    def test_near_limit_clears_payload_even_when_calibration_range_allows_pose(self):
+        observer = self.observer()
+        self.settle(observer, 0.5)
+        observer.calibration.data["bounds_rad"][1] = [-2.0, 0.0]
+        q = [0, math.radians(-1), -1, 0.2, -0.1, 0.1]
+        observer.update(q, [0.0] * 6, self.torque(observer, q, 0.5), 3.01)
+        self.assertEqual(observer.status, "near joint limit")
+        self.assertEqual(observer.mass_kg, 0)
+        self.assertEqual(observer.loads, [0.0] * 7)
+
+    def test_near_limit_samples_cannot_satisfy_fit_sample_count(self):
+        rows = copy.deepcopy(self.training)
+        for row in rows[60:]:
+            row["q"][1] = math.radians(-0.5)
+        with self.assertRaisesRegex(ValueError, "motion/limit filtering"):
+            fit_profile(rows, self.validation, self.model, self.cfg)
+
+    def test_csv_loader_excludes_stationary_samples_near_a_joint_limit(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "empty.csv"
+            headers = ["elapsed_s", "valid", "unloaded_collection", "state"]
+            headers += [f"actual_j{i}_rad" for i in range(1, 7)]
+            headers += [f"velocity_j{i}_rad_s" for i in range(1, 7)]
+            headers += [f"torque_j{i}_nm" for i in range(1, 7)]
+            with path.open("w", newline="", encoding="utf-8") as stream:
+                writer = csv.DictWriter(stream, fieldnames=headers)
+                writer.writeheader()
+                for tick in range(80):
+                    q = [0, math.radians(-0.5) if tick < 40 else -0.5, -0.7, 0, 0, 0]
+                    row = dict(
+                        elapsed_s=tick * 0.05, valid=1, unloaded_collection=1, state="feedback"
+                    )
+                    for i in range(6):
+                        row[f"actual_j{i+1}_rad"] = q[i]
+                        row[f"velocity_j{i+1}_rad_s"] = 0
+                        row[f"torque_j{i+1}_nm"] = 0
+                    writer.writerow(row)
+            path.with_suffix(".csv.meta.json").write_text(
+                json.dumps({"confirmed_unloaded": True, "config_signature": signature(self.cfg)})
+            )
+            rows = load_samples(path, self.cfg)
+            self.assertTrue(rows)
+            self.assertTrue(all(row["q"][1] == -0.5 for row in rows))
+
     def test_short_gap_does_not_repeatedly_drop_and_ramp_feedback(self):
         observer = self.observer()
         now = self.settle(observer, 0.5)

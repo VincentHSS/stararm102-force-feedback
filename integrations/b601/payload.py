@@ -9,7 +9,18 @@ from pathlib import Path
 
 from gravity import GravityModel, dot
 
-ALGORITHM = "b601-quasistatic-payload-v1"
+ALGORITHM = "b601-quasistatic-payload-v2"
+LIMIT_MARGIN_DEG = 2.0
+
+
+def interior_pose(cfg, positions):
+    # 靠近行程边界时可能有机械支撑或限位预紧，电机力矩不再独立承担自重。
+    return len(positions) >= 6 and all(
+        math.radians(j.lower_deg + LIMIT_MARGIN_DEG)
+        <= q
+        <= math.radians(j.upper_deg - LIMIT_MARGIN_DEG)
+        for j, q in zip(cfg.joints[:6], positions[:6])
+    )
 
 
 def signature(cfg):
@@ -205,6 +216,9 @@ class PayloadObserver:
             self.invalidate(now, "invalid input")
             return
         cfg, calibration = self.cfg, self.calibration
+        if not interior_pose(cfg, positions):
+            self.invalidate(now, "near joint limit")
+            return
         dt = 1 / cfg.loop_hz if self.last is None else min(max(now - self.last, 0), 0.1)
         self.last = now
         ready = self.signals.update(now, velocities[:6])
