@@ -255,7 +255,7 @@ class Config:
         if self.payload_calibration and Path(self.payload_calibration).is_absolute():
             try:
                 values["payload_calibration"] = os.path.relpath(
-                    self.payload_calibration, Path(path).resolve().parent
+                    Path(self.payload_calibration).resolve(), Path(path).resolve().parent
                 )
             except ValueError:
                 pass
