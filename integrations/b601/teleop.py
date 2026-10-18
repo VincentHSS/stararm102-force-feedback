@@ -44,6 +44,19 @@ def bounded(cfg, states):
     ]
 
 
+def startup_states(cfg, follower, *, enabled=None, clock=time.perf_counter, sleep=time.sleep):
+    # 启动时容忍短暂缺帧；每次重新请求七轴新反馈，故障和越限仍立即退出。
+    deadline = clock() + cfg.link_timeout_s
+    while True:
+        states = follower.read()
+        if states is not None:
+            check_states(cfg, states, enabled=enabled)
+            return states
+        if clock() >= deadline:
+            raise LinkError(f"Startup feedback timeout: {follower.last_error}")
+        sleep(0.0003)
+
+
 def baseline(cfg, follower, targets, clock=time.perf_counter, sleep=time.sleep):
     started, last_good = clock(), clock()
     rows = []
@@ -123,8 +136,7 @@ def hardware(
         stack.callback(transport.close)
         follower = Follower(transport, cfg, clock, sleep)
         follower.verify()
-        initial = follower.read()
-        check_states(cfg, initial)
+        initial = startup_states(cfg, follower, clock=clock, sleep=sleep)
         first = leader.read()
         if first is None:
             raise LinkError("Incomplete Leader startup feedback")
@@ -157,11 +169,9 @@ def hardware(
             follower.command(targets)
             follower.enable()
             follower.command(targets)
-            initial = follower.read()
-            check_states(cfg, initial, enabled=True)
+            initial = startup_states(cfg, follower, enabled=True, clock=clock, sleep=sleep)
             tare = baseline(cfg, follower, targets, clock, sleep)
-            initial = follower.read()
-            check_states(cfg, initial, enabled=True)
+            initial = startup_states(cfg, follower, enabled=True, clock=clock, sleep=sleep)
             session = Session(
                 cfg,
                 leader,
