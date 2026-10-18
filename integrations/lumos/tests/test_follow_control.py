@@ -30,9 +30,9 @@ class FollowControlTests(unittest.TestCase):
                 self.assertEqual(teleop.find_sdk_root(), root.resolve())
             with self.assertRaisesRegex(RuntimeError, "初始化失败"):
                 with teleop.sdk_initialization_directory(root):
-                    self.assertEqual(Path.cwd(), root.resolve())
+                    self.assertTrue(Path.cwd().samefile(root))
                     raise RuntimeError("初始化失败")
-            self.assertEqual(Path.cwd(), original)
+            self.assertTrue(Path.cwd().samefile(original))
             with self.assertRaises(RuntimeError):
                 teleop.find_sdk_root(Path(directory) / "missing")
 
