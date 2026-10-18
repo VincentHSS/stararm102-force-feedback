@@ -22,6 +22,7 @@ class Leader:
         self.uart, self.cfg, self.clock, self.sleep = uart, cfg, clock, sleep
         self.buffer = bytearray()
         self.previous = {}
+        self.last_error = None
 
     def send(self, code, payload):
         body = b"\x12\x4c" + bytes((code, len(payload))) + payload
@@ -31,6 +32,7 @@ class Leader:
         self.send(24, struct.pack("<BBH", servo_id, mode, power))
 
     def read(self):
+        self.last_error = None
         ids = list(range(7)) + ([] if self.cfg.button_id is None else [self.cfg.button_id])
         # 丢弃上轮残留；不使用 SDK 的可靠性零值启发式，也不复用旧角度。
         self.buffer.clear()
@@ -79,6 +81,9 @@ class Leader:
                     self.cfg.button_id is not None and angles[self.cfg.button_id] == 180
                 )
             self.sleep(0.0003)
+        self.last_error = "Leader missing/invalid servo IDs: " + ",".join(
+            str(i) for i in ids if i not in angles
+        )
         return None
 
     def release(self):
@@ -174,6 +179,7 @@ class Follower:
         self.pending = set()
         self.sequence = 0
         self.accepted = {}
+        self.last_error = None
         self.limits = {i: (12.5, 10.0, 28.0) if i < 3 else (12.5, 30.0, 10.0) for i in range(7)}
 
     def poll(self):
@@ -238,11 +244,13 @@ class Follower:
             self.limits[j.leader_id] = limits
 
     def read(self):
+        self.last_error = None
         self.poll()
         before = self.sequence
         for j in self.cfg.joints:
             self.transport.send(0x7FF, struct.pack("<HBBI", j.motor_id, 0xCC, 0, 0))
         deadline = self.clock() + self.cfg.read_timeout_s
+        fresh = {}
         while self.clock() < deadline:
             self.poll()
             fresh = {i: st for i, st in self.states.items() if st.sequence > before}
@@ -259,12 +267,21 @@ class Follower:
                         )
                         if abs(st.pos - old) > allowed:
                             bad = True
+                            self.last_error = (
+                                f"B601 J{i + 1} jump: {math.degrees(old):.1f} -> "
+                                f"{math.degrees(st.pos):.1f}deg, allowed={math.degrees(allowed):.1f}deg"
+                            )
                 if bad:
                     self.sleep(0.0003)
                     continue
                 self.accepted.update({i: (s.pos, s.received_at) for i, s in fresh.items()})
+                self.last_error = None
                 return [fresh[i] for i in range(7)]
             self.sleep(0.0003)
+        if not self.last_error:
+            self.last_error = "B601 missing fresh joints: " + ",".join(
+                f"J{i + 1}" for i in range(7) if i not in fresh
+            )
         return None
 
     def command(self, targets):

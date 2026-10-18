@@ -173,6 +173,7 @@ def hardware(
                 + [f"filtered_j{i}_deg" for i in range(1, 8)]
                 + [f"desired_j{i}_rad" for i in range(1, 8)]
                 + [f"reference_j{i}_rad" for i in range(1, 8)]
+                + ["leader_valid", "follower_valid", "fault_reason"]
             )
         logger.info("%s | Python UART/CAN | Ctrl+C to stop", "EXECUTE" if execute else "PREVIEW")
         started = last_tick = report = clock()
@@ -191,6 +192,9 @@ def hardware(
                     states,
                     now,
                     pressed=False if lead is None else lead[1],
+                    invalid_reason="; ".join(
+                        message for message in (leader.last_error, follower.last_error) if message
+                    ),
                 )
                 targets = session.motion.commanded
                 state = session.feedback.state
@@ -243,6 +247,11 @@ def hardware(
                         else [math.nan] * 7
                     )
                     + list(session.motion.commanded if session else targets)
+                    + [
+                        int(lead is not None),
+                        int(states is not None),
+                        session.fault_reason if session else "",
+                    ]
                 )
             if work_end - report >= 2.0:
                 logger.info(

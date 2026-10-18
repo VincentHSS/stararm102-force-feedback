@@ -226,7 +226,7 @@ class Session:
         self.fault = True
         self.fault_reason = reason
 
-    def tick(self, angles, states, now, pressed=False):
+    def tick(self, angles, states, now, pressed=False, invalid_reason=None):
         dt = max(0.0, now - self.last_tick)
         self.last_tick = now
         valid = (
@@ -248,7 +248,7 @@ class Session:
             self.rejected += 1
             self.feedback.interrupt()
             if now - self.last_good >= self.cfg.link_timeout_s:
-                self.fail("feedback timeout")
+                self.fail("feedback timeout" + (f": {invalid_reason}" if invalid_reason else ""))
             # 本轮无完整反馈就不发送新目标；仅持续超时才请求 Leader 保持并锁存故障。
             self.feedback.apply(now, pressed, self.fault)
             return False

@@ -299,13 +299,16 @@ class NativeB601Tests(unittest.TestCase):
         self.follower.read()
         self.can.omit = {0}
         self.assertIsNone(self.follower.read())
+        self.assertEqual(self.follower.last_error, "B601 missing fresh joints: J1")
 
     def test_follower_jump_is_rejected_and_return_recovers(self):
         self.follower.read()
         self.can.positions[0] = 2.0
         self.assertIsNone(self.follower.read())
+        self.assertIn("B601 J1 jump", self.follower.last_error)
         self.can.positions[0] = 0.0
         self.assertIsNotNone(self.follower.read())
+        self.assertIsNone(self.follower.last_error)
 
     def test_register_frame_does_not_advance_sensor_sequence(self):
         self.can.rx.append((17, b"\x01\x00\x33\x15" + struct.pack("<f", 12.5)))
@@ -529,8 +532,13 @@ class NativeB601Tests(unittest.TestCase):
         follower = SimFollower(self.cfg)
         follower.command = Mock()
         session = Session(self.cfg, SimLeader(), follower, initial, 0)
-        self.assertFalse(session.tick([0.0] * 7, self.states(0.3), 0.3))
+        self.assertFalse(
+            session.tick(
+                [0.0] * 7, self.states(0.3), 0.3, invalid_reason="B601 missing fresh joints: J2"
+            )
+        )
         self.assertTrue(session.fault)
+        self.assertIn("B601 missing fresh joints: J2", session.fault_reason)
         self.assertFalse(session.tick([0.0] * 7, self.states(0.4, seq=100), 0.4))
         follower.command.assert_not_called()
 
