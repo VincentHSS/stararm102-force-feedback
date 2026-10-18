@@ -724,6 +724,86 @@ class NativeB601Tests(unittest.TestCase):
             )
         self.assertFalse(any(data == b"\xff" * 7 + b"\xfc" for _, data in self.can.sent))
 
+    def test_small_shoulder_upper_drift_requires_explicit_recovery(self):
+        self.cfg.calibration_verified = True
+        self.cfg.adapter = "socketcan"
+        self.can.positions[1] = math.radians(2.1)
+        with self.assertRaisesRegex(LinkError, "J2: invalid.*position=2"):
+            hardware(
+                self.cfg,
+                execute=True,
+                serial_factory=lambda *a, **kw: self.leader_wire,
+                socket_factory=lambda _: self.can,
+                clock=self.clock,
+                sleep=self.clock.sleep,
+            )
+        self.assertFalse(any(data == b"\xff" * 7 + b"\xfc" for _, data in self.can.sent))
+
+    def test_explicit_shoulder_recovery_returns_inside_without_zero_or_mode_writes(self):
+        self.cfg.calibration_verified = True
+        self.cfg.adapter = "socketcan"
+        self.cfg.baseline_s = 0.2
+        self.can.positions[1] = math.radians(2.1)
+        hardware(
+            self.cfg,
+            execute=True,
+            recover_shoulder=True,
+            duration=0.03,
+            serial_factory=lambda *a, **kw: self.leader_wire,
+            socket_factory=lambda _: self.can,
+            clock=self.clock,
+            sleep=self.clock.sleep,
+        )
+        goals = [
+            struct.unpack_from("<f", data)[0] for can_id, data in self.can.sent if can_id == 0x102
+        ]
+        self.assertAlmostEqual(goals[0], math.radians(-5), places=6)
+        self.assertTrue(all(math.radians(-170) <= goal <= 0 for goal in goals))
+        self.assertEqual(self.can.enabled, set())
+        self.assertFalse(any(data == b"\xff" * 7 + b"\xfe" for _, data in self.can.sent))
+        self.assertFalse(any(can_id == 0x7FF and data[2] == 0x55 for can_id, data in self.can.sent))
+
+    def test_shoulder_recovery_still_blocks_large_upper_excursion(self):
+        self.cfg.calibration_verified = True
+        self.cfg.adapter = "socketcan"
+        self.can.positions[1] = math.radians(4)
+        with self.assertRaisesRegex(LinkError, "J2: invalid"):
+            hardware(
+                self.cfg,
+                execute=True,
+                recover_shoulder=True,
+                serial_factory=lambda *a, **kw: self.leader_wire,
+                socket_factory=lambda _: self.can,
+                clock=self.clock,
+                sleep=self.clock.sleep,
+            )
+        self.assertFalse(any(data == b"\xff" * 7 + b"\xfc" for _, data in self.can.sent))
+
+    def test_shoulder_recovery_timeout_disables_all_motors(self):
+        self.cfg.calibration_verified = True
+        self.cfg.adapter = "socketcan"
+        self.can.positions[1] = math.radians(2.1)
+        original_send = self.can.send
+
+        def stuck(can_id, data):
+            original_send(can_id, data)
+            self.can.positions[1] = math.radians(2.1)
+
+        self.can.send = stuck
+        with self.assertRaisesRegex(LinkError, "Shoulder startup return timeout"):
+            hardware(
+                self.cfg,
+                execute=True,
+                recover_shoulder=True,
+                serial_factory=lambda *a, **kw: self.leader_wire,
+                socket_factory=lambda _: self.can,
+                clock=self.clock,
+                sleep=self.clock.sleep,
+            )
+        self.assertEqual(self.can.enabled, set())
+        self.assertTrue(self.can.closed and self.leader_wire.closed)
+        self.assertLess(self.clock(), 2)
+
     def test_second_port_failure_closes_first_without_motion(self):
         factory = Mock(side_effect=[self.leader_wire, OSError("port busy")])
         with self.assertRaises(OSError):

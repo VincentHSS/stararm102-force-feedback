@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_CONFIG = Path(__file__).with_name("b601.example.json")
 
 
-def check_states(cfg, states, enabled=None):
+def check_states(cfg, states, enabled=None, *, shoulder_recovery=False):
     if states is None or len(states) != 7:
         raise LinkError("Incomplete B601 feedback")
     for j, state in zip(cfg.joints, states):
@@ -32,9 +32,16 @@ def check_states(cfg, states, enabled=None):
             )
             or state.status not in ((0, 1) if enabled is None else (int(enabled),))
             or max(state.mos_c, state.rotor_c) >= cfg.motor_temperature_c
-            or not j.lower_deg - 0.1 <= math.degrees(state.pos) <= j.upper_deg + 0.1
+            or not j.lower_deg - 0.1
+            <= math.degrees(state.pos)
+            <= j.upper_deg + (3.0 if shoulder_recovery and j.leader_id == 1 else 0.1)
         ):
-            raise LinkError(f"J{j.leader_id + 1}: invalid position/status/temperature")
+            raise LinkError(
+                f"J{j.leader_id + 1}: invalid position/status/temperature "
+                f"(position={math.degrees(state.pos):.2f}deg, "
+                f"allowed={j.lower_deg}..{j.upper_deg}deg, status={state.status}, "
+                f"temperature={max(state.mos_c, state.rotor_c):.1f}C)"
+            )
 
 
 def bounded(cfg, states):
@@ -44,13 +51,21 @@ def bounded(cfg, states):
     ]
 
 
-def startup_states(cfg, follower, *, enabled=None, clock=time.perf_counter, sleep=time.sleep):
+def startup_states(
+    cfg,
+    follower,
+    *,
+    enabled=None,
+    shoulder_recovery=False,
+    clock=time.perf_counter,
+    sleep=time.sleep,
+):
     # 启动时容忍短暂缺帧；每次重新请求七轴新反馈，故障和越限仍立即退出。
     deadline = clock() + cfg.link_timeout_s
     while True:
         states = follower.read()
         if states is not None:
-            check_states(cfg, states, enabled=enabled)
+            check_states(cfg, states, enabled=enabled, shoulder_recovery=shoulder_recovery)
             return states
         if clock() >= deadline:
             raise LinkError(f"Startup feedback timeout: {follower.last_error}")
@@ -85,6 +100,7 @@ def hardware(
     cfg,
     *,
     execute=False,
+    recover_shoulder=False,
     capture=None,
     diagnostics=None,
     collect_unloaded=False,
@@ -96,6 +112,8 @@ def hardware(
     sleep=time.sleep,
 ):
     cfg.validate()
+    if recover_shoulder and (not execute or capture is not None):
+        raise ValueError("Shoulder recovery requires execute without pose capture")
     if execute and not cfg.calibration_verified:
         raise ValueError(
             "Capture/verify paired pose and set calibration_verified=true before --execute"
@@ -136,7 +154,9 @@ def hardware(
         stack.callback(transport.close)
         follower = Follower(transport, cfg, clock, sleep)
         follower.verify()
-        initial = startup_states(cfg, follower, clock=clock, sleep=sleep)
+        initial = startup_states(
+            cfg, follower, shoulder_recovery=recover_shoulder, clock=clock, sleep=sleep
+        )
         first = leader.read()
         if first is None:
             raise LinkError("Incomplete Leader startup feedback")
@@ -152,7 +172,7 @@ def hardware(
         targets = bounded(cfg, initial)
         motion = Motion(cfg, targets)
         if execute:
-            check_states(cfg, initial, enabled=False)
+            check_states(cfg, initial, enabled=False, shoulder_recovery=recover_shoulder)
             mapped = [
                 j.follower_home_rad + j.direction * math.radians(a - j.leader_home_deg)
                 for j, a in zip(cfg.joints, angles)
@@ -162,6 +182,19 @@ def hardware(
                 for j, goal, actual in zip(cfg.joints, mapped, targets)
             ):
                 raise LinkError("Startup pose differs from captured pairing")
+            recovering = math.degrees(initial[1].pos) > cfg.joints[1].upper_deg + 0.1
+            if recovering:
+                # 仅显式启用的 J2 上界恢复：最多超出 3°，目标位于边界内 5°。
+                # 先通过原配对、七轴状态/温度检查，再登记清理动作后使能。
+                targets[1] = math.radians(cfg.joints[1].upper_deg - 5)
+                if targets[1] < math.radians(cfg.joints[1].lower_deg):
+                    raise LinkError("Shoulder recovery target outside workspace")
+                logger.info(
+                    "Shoulder startup return: %.2f -> %.2fdeg",
+                    math.degrees(initial[1].pos),
+                    math.degrees(targets[1]),
+                )
+                motion = Motion(cfg, targets)
             # 零位附近的微小漂移可以略超软限位；仍检查原始姿态误差，实际命令始终限位钳制。
             # 先登记所有清理动作，再使能；部分使能失败也会尝试逐个断使能。
             stack.callback(leader.release)
@@ -169,7 +202,29 @@ def hardware(
             follower.command(targets)
             follower.enable()
             follower.command(targets)
-            initial = startup_states(cfg, follower, enabled=True, clock=clock, sleep=sleep)
+            if recovering:
+                deadline = clock() + 1.5
+                while True:
+                    initial = startup_states(
+                        cfg,
+                        follower,
+                        enabled=True,
+                        shoulder_recovery=True,
+                        clock=clock,
+                        sleep=sleep,
+                    )
+                    errors = [abs(s.pos - goal) for s, goal in zip(initial, targets)]
+                    if any(error > math.radians(2) for i, error in enumerate(errors) if i != 1):
+                        raise LinkError("Other joints moved during shoulder startup return")
+                    if errors[1] <= math.radians(2):
+                        check_states(cfg, initial, enabled=True)
+                        break
+                    if clock() >= deadline:
+                        raise LinkError("Shoulder startup return timeout")
+                    follower.command(targets)
+                    sleep(1 / cfg.loop_hz)
+            else:
+                initial = startup_states(cfg, follower, enabled=True, clock=clock, sleep=sleep)
             tare = baseline(cfg, follower, targets, clock, sleep)
             initial = startup_states(cfg, follower, enabled=True, clock=clock, sleep=sleep)
             session = Session(
@@ -474,6 +529,11 @@ def main(argv=None):
     )
     parser.add_argument("--diagnostics-file", type=Path)
     parser.add_argument(
+        "--recover-shoulder",
+        action="store_true",
+        help="Explicitly allow J2 up to 3deg above its upper limit to return 5deg inside at startup",
+    )
+    parser.add_argument(
         "--collect-unloaded",
         type=Path,
         help="Collect a new explicitly unloaded CSV while following; requires --execute --confirm-unloaded",
@@ -485,6 +545,8 @@ def main(argv=None):
     )
     parser.add_argument("--simulate-payload-kg", type=float, default=0.0)
     args = parser.parse_args(argv)
+    if args.recover_shoulder and not args.execute:
+        parser.error("--recover-shoulder requires --execute and a cleared workspace")
     if not math.isfinite(args.duration) or args.duration < 0:
         parser.error("duration must be finite and nonnegative")
     if args.simulate_stall is not None and not args.simulate:
@@ -512,6 +574,7 @@ def main(argv=None):
             hardware(
                 cfg,
                 execute=args.execute,
+                recover_shoulder=args.recover_shoulder,
                 capture=args.capture,
                 diagnostics=args.collect_unloaded or args.diagnostics_file,
                 collect_unloaded=args.collect_unloaded is not None,
