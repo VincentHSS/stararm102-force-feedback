@@ -177,11 +177,15 @@ def hardware(
                 j.follower_home_rad + j.direction * math.radians(a - j.leader_home_deg)
                 for j, a in zip(cfg.joints, angles)
             ]
-            if any(
-                abs(math.degrees((goal - actual) / j.direction)) > cfg.startup_error_deg
+            mismatches = [
+                f"J{j.leader_id+1}={abs(math.degrees((goal-actual)/j.direction)):.2f}deg"
                 for j, goal, actual in zip(cfg.joints, mapped, targets)
-            ):
-                raise LinkError("Startup pose differs from captured pairing")
+                if abs(math.degrees((goal - actual) / j.direction)) > cfg.startup_error_deg
+            ]
+            if mismatches:
+                raise LinkError(
+                    "Startup pose differs from captured pairing: " + ", ".join(mismatches)
+                )
             recovering = math.degrees(initial[1].pos) > cfg.joints[1].upper_deg + 0.1
             if recovering:
                 # 仅显式启用的 J2 上界恢复：最多超出 3°，目标位于边界内 5°。
