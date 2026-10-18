@@ -1,4 +1,6 @@
-# 安装与上机教程
+# 方案一：自家 StarArm-102 安装与上机教程
+
+本页适用于 StarArm-102 Leader → 自家 StarArm-102 从臂，入口是仓库根目录 `stararm102_ro.py`。B601-DM 与 Lumos 请分别使用 [B601-DM 教程](b601_dm.md)、[Lumos 教程](lumos.md)，或返回 [三种方案对照](../README.md)。
 
 ## 1. 准备设备
 

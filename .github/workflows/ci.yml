@@ -25,9 +25,14 @@ jobs:
       - name: Install dependencies
         run: python -m pip install -r requirements.txt ./integrations/lerobot_auto_feedback
       - name: Check syntax
-        run: python -m compileall -q stararm102_ro.py integrations/lerobot_auto_feedback/stararm_auto_feedback
+        run: python -m compileall -q stararm102_ro.py integrations/lerobot_auto_feedback/stararm_auto_feedback integrations/lumos
       - name: Run unit tests
         run: python -m unittest discover -s tests -v
+      - name: Run Lumos optimized version tests
+        working-directory: integrations/lumos
+        run: python -m unittest discover -s tests -v
+      - name: Check Lumos command line help
+        run: python integrations/lumos/stararm102_lumos_teleop.py --help
       - name: Check command line help
         run: python stararm102_ro.py --help
       - name: Check official feedback installer

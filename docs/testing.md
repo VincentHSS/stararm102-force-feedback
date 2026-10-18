@@ -35,7 +35,16 @@ python -m stararm_auto_feedback.install --help
 
 ## CI
 
-GitHub Actions 配置在 Ubuntu 和 Windows 上运行 Python 3.10 与 3.12，执行依赖安装、语法检查、52 项测试与命令行帮助。CI 结果以对应提交的 Actions 页面为准；配置覆盖的平台不等于已经完成实机适配。
+Lumos 优化版另外有 34 项模拟测试，代码仅维护在本力反馈仓库的 `integrations/lumos/`，不放入原 Lumos 仓库。运行方式：
+
+```bash
+cd integrations/lumos
+python -m unittest discover -s tests -v
+```
+
+覆盖负载阻尼、堵转窗口、稳定恢复、反向运动、HD 仲裁、夹爪反馈新鲜度、异常时暂停新目标及退出清理。根目录 52 项加 Lumos 34 项，共 86 项。
+
+GitHub Actions 配置在 Ubuntu 和 Windows 上运行 Python 3.10 与 3.12，执行依赖安装、三种方案语法检查、两组共 86 项测试与命令行帮助。CI 结果以对应提交的 Actions 页面为准；配置覆盖的平台不等于已经完成实机适配。
 
 ## 当前验证状态
 

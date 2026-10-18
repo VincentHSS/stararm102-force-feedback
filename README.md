@@ -1,49 +1,31 @@
 # StarArm 102 Force Feedback
 
-StarArm 102 主从遥操作控制器，支持 StarArm 从臂电流反馈，以及 Seeed B601-DM 从臂力矩反馈，提供主臂阻尼、堵转检测与位置保持。
+以 StarArm-102 为 Leader，为三种不同从臂提供负载阻尼、堵转检测、保持和恢复释放。三种方案的代码、启动方式与教程分开维护，按实际从臂选择。
 
-StarArm 自家从臂保留原单文件控制程序；Seeed 601 使用官方 LeRobot 遥操作的自动反馈增强。
+## 先选你的方案
 
-## 功能
+| 方案 | 主臂 → 从臂 | 负载来源 | 运行方式 | 代码入口 | 教程 |
+| --- | --- | --- | --- | --- | --- |
+| **一：自家 StarArm-102** | StarArm-102 → StarArm-102，可配置多个从臂 | 舵机电流 mA | 直接运行脚本，保留原有手动控制台 | [`stararm102_ro.py`](stararm102_ro.py) | [StarArm 教程](docs/tutorial.md) |
+| **二：Seeed B601-DM** | StarArm-102 → Seeed B601-DM | DM 电机估计力矩 Nm | 增强官方 `lerobot-teleoperate`，继续使用原命令 | [`integrations/lerobot_auto_feedback/`](integrations/lerobot_auto_feedback/) | [B601-DM 教程](docs/b601_dm.md) |
+| **三：Lumos 优化版** | StarArm-102 → Lumos 单臂及可选夹爪 | SDK 关节/夹爪力矩 Nm | 本仓库内独立的 Python 遥操作版本 | [`integrations/lumos/`](integrations/lumos/) | [Lumos 教程](docs/lumos.md) |
 
-- 主臂角度经均值滤波后发送到从臂，支持配置多个从臂。
-- 按从臂关节电流映射主臂阻尼，默认 30 Hz 采样、按功率死区更新。
-- 根据角度误差、同向跟随比例和负载判断堵转，默认锁定全部主臂关节。
-- 手动锁定与自动锁定统一管理，阻尼更新跳过已锁定关节。
-- 锁力重发独立于从臂采样；自动解锁要求误差持续回落。
-- 终端输入排队，主线程统一处理控制状态与串口操作。
+三种方案都提供自动负载阻尼和堵转保持，但驱动、映射和配置不能混用。**B601-DM 与 Lumos 不需要运行时手动输入 LD 扭矩。**
 
-电流反馈是负载的近似量，不是经过标定的末端力或力矩测量。
+Lumos 优化版只在本力反馈仓库中维护。[原 Lumos 仓库](https://github.com/VincentHSS/stararm102-lumos-teleop)保留原有版本；需要自动反馈功能，请使用这里的 `integrations/lumos/`，不要把优化文件覆盖到原项目中。
 
-## Seeed B601-DM：增强官方 LeRobot 遥操作
+## 方案一：自家 StarArm-102 主从臂
 
-在已经能运行官方遥操作的同一环境中安装：
+对应根目录 `stararm102_ro.py`。主臂角度经滤波后发送至自家从臂，用从臂电流调节主臂阻尼；结合角差、同向跟随比例和负载确认堵转。手动锁定与自动锁定统一管理，保持重发不会被阻尼更新覆盖。
 
-```bash
-python -m pip install ./integrations/lerobot_auto_feedback
-python -m stararm_auto_feedback.install
-```
-
-然后继续使用原来的 `lerobot-teleoperate` 命令。自动加入 601 负载反馈阻尼与堵转时的 Leader 保持；不增加手动扭矩输入、不另开串口、不替换官方映射、驱动或遥操作循环。
-
-[601 完整安装与逻辑说明](docs/b601_dm.md)。原独立 601 控制入口已移除。官方标定与设备配置继续沿用；实际阻尼和锁力尚未上机验证。
-
-## StarArm 从臂快速开始
-
-以下操作和手动控制命令仅对应 StarArm 自家从臂的 `stararm102_ro.py`。Seeed 601 的官方 LeRobot 集成没有这套手动控制台。
-
-需要 Python 3.10+、主从机械臂、串口连接与设备供电。验证情况见 [测试说明](docs/testing.md)。
+需要 Python 3.10+。在仓库根目录安装依赖：
 
 ```bash
-python -m venv .venv
-# Linux
-source .venv/bin/activate
-# Windows PowerShell 改用：.\.venv\Scripts\Activate.ps1
 python -m pip install -r requirements.txt
 python -m serial.tools.list_ports
 ```
 
-编辑 `stararm102_ro.py` 顶部的串口配置：
+编辑脚本顶部端口配置：
 
 ```python
 SERVO_BAUDRATE = 1000000
@@ -51,7 +33,7 @@ LEADER_PORT_NAME = "/dev/ttyUSB0"
 FOLLOWER_PORT_NAME_Arr = ["/dev/ttyUSB1"]
 ```
 
-Windows 对应填写 `COM3`、`COM4` 等实际端口，然后启动：
+Windows 使用实际 COM 端口。启动时按 Leader 型号选择：
 
 ```bash
 python stararm102_ro.py --leader_type 102LD
@@ -59,57 +41,88 @@ python stararm102_ro.py --leader_type 102LD
 python stararm102_ro.py --leader_type 102HD
 ```
 
-默认启用电流反馈和堵转检测。首次上机应在支撑好机械臂、工作区清空、可及时断电的条件下低速验证；启动会卸力并重置圈数，程序内的 `n` 和 `q` 也会使主臂卸力。
+默认启用电流反馈和堵转检测。启动会卸力并重置圈数；`n` 和 `q` 也会使主臂卸力。
 
-## 常用操作
+**以下手动命令仅适用于方案一，不适用于 B601-DM 或 Lumos：**
 
 | 终端输入 | 功能 |
-|---|---|
+| --- | --- |
 | `s` / `fb` / `st` | 总体状态 / 电流反馈 / 堵转状态 |
 | `fb on` / `fb off` | 开关电流反馈；关闭时保留已有锁定 |
 | `st lock` / `st unlock` | 锁定全部主臂关节 / 解除已有锁定 |
 | `l` | 锁定 J1–J6，关闭电流反馈 |
 | `500` | 全部主臂关节设为 500 mW 阻尼，关闭电流反馈 |
 | `3=800 4=900` | 设置舵机 ID 3、4 的阻尼，对应 J4、J5 |
-| `n` | 主臂卸力，同时关闭电流反馈和堵转检测 |
+| `n` | 主臂卸力，同时关闭电流反馈和堵转检测；从臂继续跟随 |
 | `h` / `q` | 帮助 / 退出 |
 
-**协议中的功率 `0` 表示按功率保护阈值执行，不代表关闭。** 反馈映射下限至少为 1 mW；`n` 会卸力且不会停止从臂跟随。
+[完整教程](docs/tutorial.md) · [代码逻辑](docs/architecture.md) · [命令与参数](docs/reference.md) · [故障排查](docs/troubleshooting.md)
 
-## 文档
+## 方案二：Seeed B601-DM，增强官方 LeRobot 遥操作
 
-| 文档 | 内容 |
-|---|---|
-| [601 版本教程与逻辑](docs/b601_dm.md) | 官方 LeRobot 接入、自动反馈逻辑、参数与卸载 |
-| [安装与上机教程](docs/tutorial.md) | 接线、环境、端口、启动、基础验证和标定 |
-| [代码逻辑](docs/architecture.md) | 主循环、数据流、负载映射、堵转状态和锁力维护 |
-| [命令与参数](docs/reference.md) | 终端命令、启动参数和默认值 |
-| [故障排查](docs/troubleshooting.md) | 未锁定、锁力不足、误触发、串口和反馈问题 |
-| [测试说明](docs/testing.md) | 无硬件回归、CI 和实机验证范围 |
-| [变更记录](CHANGELOG.md) | 锁定可靠性及控制台整理 |
+对应 `integrations/lerobot_auto_feedback/`。先确保官方遥操作可以运行，再在同一 Python/Conda 环境、仓库根目录执行：
 
-## 项目结构
-
-```text
-stararm102_ro.py          StarArm 从臂控制与 Leader 核心
-integrations/lerobot_auto_feedback/
-                         官方 LeRobot 自动反馈增强与参数示例
-requirements.txt         串口与舵机 SDK 依赖
-requirements-dev.txt     开发工具
-README.md
-CHANGELOG.md
-docs/                    中文教程与逻辑说明
-tests/test_controller.py 无硬件回归测试
-.github/workflows/ci.yml  自动检查
+```bash
+python -m pip install ./integrations/lerobot_auto_feedback
+python -m stararm_auto_feedback.install
 ```
 
+之后继续运行你原来的 `lerobot-teleoperate` 命令。安装器在官方发送动作后加入自动反馈，沿用官方设备连接、标定、关节映射、限位、相机和退出流程。
+
+自动读取 B601-DM 负载并调节 Leader 阻尼，堵转时请求保持，误差持续恢复后回到阻尼。不另开串口、不新增独立遥操作循环，也不增加手动扭矩控制台。
+
+核心代码：[`controller.py`](integrations/lerobot_auto_feedback/stararm_auto_feedback/controller.py)，含关键逻辑中文注释。参数文件、安装与卸载方式见 [B601-DM 教程](docs/b601_dm.md)。此方案只挂接 `lerobot-teleoperate`；不要用方案一的脚本控制 B601-DM。
+
+## 方案三：Lumos 优化版，独立保存在本仓库
+
+对应 `integrations/lumos/`，不依赖 LeRobot。保留原 Lumos 遥操作的校准、映射、滤波、限速与诊断，增加自动阻尼、堵转保持、恢复释放，以及 HD 按钮与自动保持的统一仲裁。松开 HD 不会覆盖仍有效的自动保持。
+
+从仓库根目录进入 Lumos 优化版后安装环境：
+
+```bash
+cd integrations/lumos
+bash scripts/install_ubuntu.sh
+```
+
+安装脚本使用当前激活的 Python 环境，下载官方 Lumos SDK。完整的 Ubuntu、CAN、端口及校准准备见 [Lumos 教程](docs/lumos.md)。首次使用先校准，再预览：
+
+```bash
+python stararm102_lumos_teleop.py --calibrate --can can0 --leader-port /dev/ttyUSB0 --gripper
+python stararm102_lumos_teleop.py --can can0 --leader-port /dev/ttyUSB0 --gripper
+```
+
+确认映射后执行，自动反馈默认开启：
+
+```bash
+python stararm102_lumos_teleop.py --can can0 --leader-port /dev/ttyUSB0 --gripper --execute
+```
+
+无 HD 按钮时增加 `--button-disable`；不使用夹爪时从所有命令中删除 `--gripper`。预览和校准不启用自动反馈，HD 按钮保持原有行为。`--feedback-disable` 可关闭整套自动反馈以排查接口兼容问题。
+
+带中文注释的核心：[`lumos_auto_feedback.py`](integrations/lumos/lumos_auto_feedback.py)。它需要与 [`stararm102_lumos_teleop.py`](integrations/lumos/stararm102_lumos_teleop.py) 放在同一目录，由后者调用。
+
+已有 Lumos 校准文件可以继续使用；如果 SDK 安装在原 Lumos 项目内，用 `--sdk-root /实际路径/startouch_sdk` 指向它，无需修改原项目文件。
+
+## 反馈含义与验证范围
+
+电流/估计力矩反映的负载包含重力、摩擦等影响，不等于经过标定的末端接触力。Leader SDK 的功率单位为 mW，不能直接当作从臂 Nm 力矩；协议中的功率 `0` 有特殊含义，不代表关闭。
+
+Leader 保持不是从臂急停；实际保持能力取决于固件、供电及通信。三个方案均做了无硬件模拟验证，尚未完成实机锁力和整机保护验证。具体反馈新鲜度与通信边界分别写在各方案教程中。
+
 ## 开发验证
+
+在仓库根目录运行 StarArm 与 B601-DM 的 52 项测试：
 
 ```bash
 python -m pip install -r requirements.txt
 python -m unittest discover -s tests -v
-python -m py_compile stararm102_ro.py
-python stararm102_ro.py --help
 ```
 
-测试使用模拟串口与控制器，不连接机械臂。本项目调用第三方 `fashionstar-uart-sdk`，不随仓库分发其源码；第三方组件遵循各自许可。当前版本没有完成实机锁力和整机安全验证，控制频率取决于串口、设备数量和监控查询耗时。
+Lumos 优化版的 34 项测试单独运行：
+
+```bash
+cd integrations/lumos
+python -m unittest discover -s tests -v
+```
+
+共 86 项模拟测试；CI 在 Ubuntu / Windows、Python 3.10 / 3.12 上执行。详情见 [测试说明](docs/testing.md) 和 [变更记录](CHANGELOG.md)。第三方 SDK 组件遵循各自许可。
