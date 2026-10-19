@@ -108,7 +108,8 @@ class GuideTests(unittest.TestCase):
             path = Path(directory) / "train.csv"
             path.write_bytes(b"original data")
             path.with_suffix(".csv.meta.json").write_bytes(b"original metadata")
-            guide.archive(path)
+            with contextlib.redirect_stdout(Capture()):
+                guide.archive(path)
             self.assertFalse(path.exists())
             output = next(Path(directory).glob("*.csv"))
             self.assertEqual(output.read_bytes(), b"original data")

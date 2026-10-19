@@ -18,6 +18,7 @@ def main(argv=None):
     parser.add_argument(
         "--self-check", action="store_true", help="validate files without opening devices"
     )
+    parser.add_argument("--ready", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     from config import Config
     from extra_load import load_observer
@@ -36,9 +37,12 @@ def main(argv=None):
     print("B601-DM 额外负载反馈\n")
     print("空载模型已固定；拿起物体后根据信号增加阻尼，不显示公斤数。")
     print("J2 = 肩部抬落大臂，J3 = 肘部屈伸小臂，J4 = 腕部俯仰。")
-    print("先摆好两臂对应姿态，保持空载，清空从臂活动范围。")
-    print("准备时间不限；按回车表示姿态已对应、双手已离开，可以使能跟随。")
-    input("准备好后按回车开始；关闭窗口可取消。")
+    if not args.ready:
+        print("先摆好两臂对应姿态，保持空载，清空从臂活动范围。")
+        print("准备时间不限；按回车表示姿态已对应、双手已离开，可以使能跟随。")
+        input("准备好后按回车开始；关闭窗口可取消。")
+    else:
+        print("现场准备已确认，开始设备检查。")
     # 仅重记主臂参考，不改变从臂零位或已训练的重力角度基准。
     with single_instance(cfg):
         refresh_leader_reference()
