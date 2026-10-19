@@ -81,5 +81,6 @@ if __name__ == "__main__":
     except (Exception, KeyboardInterrupt) as exc:
         print(f"\n未启动或已退出：{exc}")
         code = 1
-    input("按回车关闭窗口。")
+    if sys.stdin.isatty() and "--self-check" not in sys.argv[1:]:
+        input("按回车关闭窗口。")
     raise SystemExit(code)
