@@ -23,6 +23,7 @@ class Leader:
         self.buffer = bytearray()
         self.previous = {}
         self.last_error = None
+        self.telemetry = {}
 
     def send(self, code, payload):
         body = b"\x12\x4c" + bytes((code, len(payload))) + payload
@@ -30,16 +31,20 @@ class Leader:
 
     def mode(self, servo_id, mode, power):
         self.send(24, struct.pack("<BBH", servo_id, mode, power))
+        if mode == 0x12:
+            # SDK 将“停止后进入阻尼”与“设置阻尼功率”作为两条独立命令发送。
+            self.send(9, struct.pack("<BH", servo_id, power))
 
     def read(self):
         self.last_error = None
+        self.telemetry = {}
         ids = list(range(7)) + ([] if self.cfg.button_id is None else [self.cfg.button_id])
         # 丢弃上轮残留；不使用 SDK 的可靠性零值启发式，也不复用旧角度。
         self.buffer.clear()
         self.uart.reset_input_buffer()
         self.send(25, bytes((22, 1, len(ids), *ids)))
         deadline = self.clock() + self.cfg.read_timeout_s
-        angles = {}
+        angles, telemetry = {}, {}
         while self.clock() < deadline:
             chunk = self.uart.read(min(self.uart.in_waiting, 4096))
             if chunk:
@@ -61,7 +66,9 @@ class Leader:
                 del self.buffer[:size]
                 if raw[2] != 22 or raw[3] != 16:
                     continue
-                servo_id, _, _, _, _, _, angle, turn = struct.unpack("<BHHHHBih", raw[4:-1])
+                servo_id, voltage, current, power, temp_raw, status, angle, turn = struct.unpack(
+                    "<BHHHHBih", raw[4:-1]
+                )
                 if servo_id not in ids or (angle == -235929599 and turn == 0):
                     continue
                 value, now = angle / 10.0, self.clock()
@@ -74,9 +81,17 @@ class Leader:
                         continue
                 # 有完整校验通过的回包才更新，value==0 不需要与上次不同。
                 angles[servo_id] = value
+                telemetry[servo_id] = {
+                    "voltage_mv": voltage,
+                    "current_ma": current,
+                    "power_mw": power,
+                    "temperature_raw": temp_raw,
+                    "status": status,
+                }
             if len(angles) == len(ids):
                 now = self.clock()
                 self.previous.update({i: (v, now) for i, v in angles.items()})
+                self.telemetry = telemetry
                 return [angles[i] for i in range(7)], bool(
                     self.cfg.button_id is not None and angles[self.cfg.button_id] == 180
                 )

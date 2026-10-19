@@ -19,6 +19,7 @@ from payload import (
     ALGORITHM,
     Calibration,
     MotionSignals,
+    SettledPose,
     friction_features,
     interior_pose,
     signature,
@@ -74,7 +75,7 @@ def regress(features, values, prior):
     return [b / scale for b, scale in zip(beta, scales)]
 
 
-def load_samples(path, cfg):
+def load_samples(path, cfg, require_settled=False):
     path = Path(path)
     metadata = json.loads(path.with_suffix(path.suffix + ".meta.json").read_text(encoding="utf-8"))
     if metadata.get("confirmed_unloaded") is not True or metadata.get(
@@ -82,7 +83,16 @@ def load_samples(path, cfg):
     ) != signature(cfg):
         raise ValueError("Use separately collected, confirmed unloaded data from the same pairing")
     intervals = None
-    if metadata.get("sample_selection") == "operator_pose_capture":
+    selection = metadata.get("sample_selection")
+    explicit_empty = selection == "operator_confirmed_empty_interval"
+    if explicit_empty:
+        if metadata.get("capture_complete") is not True:
+            raise ValueError("Confirmed empty interval is incomplete")
+        if metadata.get("source_sha256") != hashlib.sha256(path.read_bytes()).hexdigest():
+            raise ValueError("Confirmed empty interval CSV checksum mismatch")
+    elif selection not in (None, "operator_pose_capture"):
+        raise ValueError("Unknown unloaded sample selection")
+    if selection == "operator_pose_capture" or explicit_empty:
         intervals = metadata.get("sample_intervals_s")
         if metadata.get("capture_complete") is not True:
             raise ValueError(
@@ -90,7 +100,7 @@ def load_samples(path, cfg):
             )
         if (
             not isinstance(intervals, list)
-            or len(intervals) != 4
+            or len(intervals) != (1 if explicit_empty else 4)
             or any(
                 not isinstance(pair, list)
                 or len(pair) != 2
@@ -104,39 +114,56 @@ def load_samples(path, cfg):
             or any(a[1] > b[0] for a, b in zip(intervals, intervals[1:]))
         ):
             raise ValueError("Invalid guided collection intervals")
-    signals, result, last_sample = MotionSignals(), [], -math.inf
+    signals, settled, result, last_sample = MotionSignals(), SettledPose(), [], -math.inf
     with path.open(encoding="utf-8-sig", newline="") as stream:
         for row in csv.DictReader(stream):
             try:
+                if require_settled and row["valid"] != "1" and row["state"] == "feedback":
+                    # 与运行观察器一致：短缺帧不积累新证据，下个有效包按时间间隔重新检查。
+                    continue
                 if (
                     row["valid"] != "1"
-                    or row["unloaded_collection"] != "1"
+                    or (row["unloaded_collection"] != "1" and not explicit_empty)
                     or row["state"] != "feedback"
                 ):
                     signals = MotionSignals()
+                    settled = SettledPose()
                     continue
                 now = float(row["elapsed_s"])
                 if intervals is not None and not any(lo <= now <= hi for lo, hi in intervals):
                     signals = MotionSignals()
+                    settled = SettledPose()
                     continue
                 q = [float(row[f"actual_j{i}_rad"]) for i in range(1, 7)]
                 raw_v = [float(row[f"velocity_j{i}_rad_s"]) for i in range(1, 7)]
                 tau = [float(row[f"torque_j{i}_nm"]) for i in range(1, 7)]
                 if not all(math.isfinite(v) for v in q + raw_v + tau + [now]):
                     signals = MotionSignals()
+                    settled = SettledPose()
                     continue
                 ready = signals.update(now, raw_v)
+                stable = settled.update(
+                    now,
+                    q,
+                    raw_v,
+                    signals.acceleration,
+                    cfg.payload_max_speed_rad_s,
+                    cfg.payload_max_accel_rad_s2,
+                )
                 if (
                     not ready
                     or max(map(abs, raw_v)) > cfg.payload_max_speed_rad_s
                     or max(map(abs, signals.acceleration)) > cfg.payload_max_accel_rad_s2
+                    or (require_settled and not stable)
                 ):
                     continue
                 if now - last_sample < 0.05:
                     continue
                 if not interior_pose(cfg, q):
                     continue
-                result.append({"q": q, "v": list(signals.velocity), "tau": tau})
+                result.append(
+                    {"q": q, "v": list(signals.velocity), "tau": tau, "settled_pose": stable}
+                )
                 last_sample = now
             except (KeyError, ValueError):
                 raise ValueError(

@@ -13,6 +13,8 @@ python windows/calibration_guide.py --collect train
 python windows/calibration_guide.py --collect check
 python windows/launcher.py --fit
 python windows/demo.py
+# 仅检查主臂输出；从臂必须失能并得到支撑
+python windows/demo.py --check-damping
 ```
 
 第一次回车确认两臂姿态对应、夹爪空载、无外部接触、人员离开活动范围，然后检查设备并启动跟随。每组准备时间不限；按窗口给出的 J2/J3/J4 动作调整，到位后再次按回车，开始累计 10 秒稳定数据。移动或反馈不稳定时暂停计时，四组完成后才停机。准备阶段的数据保留在原始 CSV 中，拟合只使用确认采样的时间段；提前结束的引导采样会被拒绝用于拟合。
@@ -25,10 +27,15 @@ python windows/demo.py
 python windows/launcher.py --restore
 ```
 
-需要 J2 小范围启动回收时，按[回收条件](../../../docs/b601_payload.md)确认现场后显式添加 `--recover-shoulder`。该选项仅用于空载采样，默认关闭。
+需要 J2 小范围启动回收时，按[回收条件](../../../docs/b601_extra_load.md)确认现场后，为采样或展示入口显式添加 `--recover-shoulder`。只用于明确空载启动，默认关闭；回收后临时对齐本轮主臂 J2 参考，不改从臂零位，也不让它追回边界。
 
 按 Esc、Ctrl+C 或使用便携包的“停止.cmd”结束。退出时等待参数恢复完成。窗口关闭时也会请求后台控制进程正常退出；进程异常终止后仍需检查恢复标记。
 
 拟合入口生成 `extra_load` 模式：先扣除自重和摩擦，再按多轴额外负载证据增加阻尼，不显示公斤数。模型通过独立空载验证后才替换 `paired_payload.json`，旧配置备份到 `logs/references/`，每次拟合使用新的标定文件名。这只通过了空载验证，拿起、持续持物和放下效果仍须实测。
 
 展示入口也提供不限时准备：按回车确认两臂对应且可以使能后，只重记主臂参考，保持从臂零位及训练基准，再启动跟随。展示期间没有固定倒计时；Ctrl+C 或“停止.cmd”结束。旧 Windows 展示包与原 Lumos 仓库不受此更新影响。
+## 实际取放区域补采
+
+`python calibration_guide.py --collect workspace --recover-shoulder` 按实际取物、离开台面、抬起、放下前的空手姿态补采。每组准备不限时，到位回车后只累计连续稳定数据。四组完成后，等待操作者放稳并支撑从臂、回车确认，再停止。
+
+停机后执行 `python launcher.py --validate-workspace`。至少需要 80 个可观测稳定样本且空载没有额外负载候选；验证通过才更新额外负载配置中的姿态邻域，不重新拟合自重系数、噪声或阈值。失败保留原配置。全程保持空载；不能夹着水瓶采集。

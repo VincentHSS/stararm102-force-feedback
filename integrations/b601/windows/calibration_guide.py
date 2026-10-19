@@ -26,6 +26,12 @@ CHECK_TASKS = (
     "固定 J3 约 -105 度，只动 J2 到约 -68 度，再停住。",
     "固定 J2 / J3，只动 J4 腕部俯仰到约 +20 度，再停住。",
 )
+WORKSPACE_TASKS = (
+    "保持空载，摆到平时夹住水瓶前的取物姿态（J2 肩 / J3 肘 / J4 腕俯仰），再停住。",
+    "保持空载，摆到水瓶刚离开台面的姿态，再停住。",
+    "保持空载，摆到平时抬起水瓶后的持物姿态，再停住。",
+    "保持空载，摆到平时放下水瓶前的姿态，再停住。",
+)
 
 
 def refresh_leader_reference(recover_shoulder=False):
@@ -139,6 +145,8 @@ def guided_loop(child, path, tasks, mode):
             ]
         eligible = interior and not errors
         steady = eligible and max(map(abs, v)) <= cfg.payload_max_speed_rad_s
+        if mode == "workspace":
+            steady = eligible and row.get("settled_pose") == "1"
         if shown != (plan.index, plan.collecting):
             print(
                 "\n"
@@ -178,6 +186,9 @@ def guided_loop(child, path, tasks, mode):
             except RuntimeError:
                 pass
             if plan.complete:
+                if mode == "workspace":
+                    print("\n四组空载记录完成。请先放稳并支撑从臂；准备时间不限。", flush=True)
+                    input("放稳后按回车，才会停止跟随并断使能。")
                 return True
         time.sleep(0.1)
     return False
@@ -198,14 +209,18 @@ def main(argv=None):
     sys.stdout.reconfigure(encoding="utf-8")
     sys.stderr.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--collect", choices=("train", "check"), default="train")
+    parser.add_argument("--collect", choices=("train", "check", "workspace"), default="train")
     parser.add_argument("--self-check", action="store_true")
     parser.add_argument("--recover-shoulder", action="store_true")
     parser.add_argument(
         "--ready", action="store_true", help="Readiness already confirmed by operator"
     )
     args = parser.parse_args(argv)
-    tasks = CHECK_TASKS if args.collect == "check" else TASKS
+    tasks = (
+        WORKSPACE_TASKS
+        if args.collect == "workspace"
+        else CHECK_TASKS if args.collect == "check" else TASKS
+    )
     if args.self_check:
         from guided_plan import PoseCapture
 
@@ -223,6 +238,10 @@ def main(argv=None):
     print("夹爪不夹物、无外部接触，人员离开从臂活动范围。\n")
     print("确认两臂姿态对应后，只重记主臂参考偏移；从臂绝对角度基准保留。")
     print("共四组。每组准备时间不限，到位后按回车，再保持静止 10 秒。")
+    if args.collect == "workspace":
+        print("本轮仅验证你实际取放水瓶的空手姿态，全程不要夹物。")
+        print("停稳后才累计有效时间；不会拟合或改动现有自重模型。")
+        print("四组完成后会等待你放稳从臂、按回车，再停止跟随。")
     print("第一次回车启动跟随；之后每组摆好姿态，再按一次回车开始本组采样。")
     print("J1 底座左右转；J2 肩抬大臂；J3 肘屈伸小臂；J4 腕部上下点头。")
     print("J5 腕部左右偏；J6 末端拧转；J7 夹爪。本轮主要动 J2、J3、J4。\n")

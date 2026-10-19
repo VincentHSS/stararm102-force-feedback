@@ -117,13 +117,42 @@ class ExtraLoadTests(unittest.TestCase):
             self.step(observer, now + tick / 100, 1, v=[1.0] * 6)
         self.assertLess(observer.strength, 0.001)
 
+    def test_low_reported_speed_cannot_hide_position_oscillation(self):
+        observer = self.observer()
+        for tick in range(1, 301):
+            q = [0, -1.1 + 0.02 * math.sin(tick / 10), -1, 0.2, -0.1, 0.1]
+            self.step(observer, tick / 100, 1, q=q)
+        self.assertEqual(observer.strength, 0)
+        self.settle(observer, 0.5, start=3, duration=2)
+        self.assertGreater(observer.strength, 0.9)
+
+    def test_changing_velocity_needs_continuous_settling_before_new_feedback(self):
+        observer = self.observer()
+        for tick in range(1, 401):
+            velocity = [0, 0.1 if tick % 40 else 0, 0, 0, 0, 0]
+            self.step(observer, tick / 100, 1, v=velocity)
+        self.assertEqual(observer.strength, 0)
+
     def test_interrupted_confirmation_does_not_count_unobserved_time(self):
         observer = self.observer()
         now = self.settle(observer)
         for tick in range(1, 11):
             self.step(observer, now + tick / 100, 1)
-        observer.gap(now + 0.11)
-        for tick in range(12, 25):
+        observer.gap(now + 0.12)
+        for tick in range(14, 24):
+            self.step(observer, now + tick / 100, 1)
+        self.assertEqual(observer.strength, 0)
+        for tick in range(24, 29):
+            self.step(observer, now + tick / 100, 1)
+        self.assertGreater(observer.strength, 0)
+
+    def test_long_confirmation_gap_requires_new_observed_evidence(self):
+        observer = self.observer()
+        now = self.settle(observer)
+        for tick in range(1, 11):
+            self.step(observer, now + tick / 100, 1)
+        observer.gap(now + 0.18)
+        for tick in range(19, 30):
             self.step(observer, now + tick / 100, 1)
         self.assertEqual(observer.strength, 0)
 
@@ -137,6 +166,18 @@ class ExtraLoadTests(unittest.TestCase):
         self.assertEqual(observer.strength, 0)
         self.settle(observer, 0.5, start=now + 0.3)
         self.step(observer, now + 4, 0.5)
+        self.assertEqual(observer.strength, 0)
+
+    def test_short_packet_gap_during_motion_uses_last_packet_time(self):
+        observer = self.observer()
+        now = self.settle(observer, 0.5)
+        for tick in range(1, 51):
+            self.step(observer, now + tick / 100, 0.5, v=[1.0] * 6)
+        before = observer.strength
+        self.assertGreater(before, 0.9)
+        observer.gap(now + 0.51)
+        self.assertEqual(observer.strength, before)
+        observer.gap(now + 0.8)
         self.assertEqual(observer.strength, 0)
 
     def test_limit_outside_range_and_invalid_input_clear_feedback(self):

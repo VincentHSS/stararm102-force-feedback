@@ -86,6 +86,7 @@ class Config:
     power_deadband_mw: int = 25
     hold_mw: int = 6000
     relock_s: float = 1.0
+    damping_refresh_s: float = 0.5
     lock_deg: float = 20.0
     release_deg: float = 8.0
     window_s: float = 0.5
@@ -176,6 +177,8 @@ class Config:
             raise ValueError("Filter, motion and confirmation settings must be positive")
         if self.window_s < 0.1 or self.confirm_windows < 1 or self.baseline_s < 0.2:
             raise ValueError("Invalid observation/baseline interval")
+        if not 0.1 <= self.damping_refresh_s <= 2:
+            raise ValueError("Damping refresh interval must be within 0.1..2 seconds")
         if not 0 < self.gripper_force_ratio <= 1 or not 1 <= self.startup_error_deg <= 20:
             raise ValueError("Invalid gripper force ratio or startup error")
         if self.feedback_mode not in ("legacy", "payload", "extra_load") or not isinstance(

@@ -16,6 +16,7 @@ from pathlib import Path
 from bus import Follower, Leader, LinkError, SerialCAN, SocketCAN, State
 from config import Config
 from controller import Motion, Session
+from payload import MotionSignals, SettledPose, interior_pose
 
 logger = logging.getLogger(__name__)
 DEFAULT_CONFIG = Path(__file__).with_name("b601.example.json")
@@ -113,6 +114,8 @@ def hardware(
     sleep=time.sleep,
 ):
     cfg.validate()
+    if recover_shoulder:
+        cfg = copy.deepcopy(cfg)
     if guided_collection and not collect_unloaded:
         raise ValueError("Guided collection requires unloaded collection")
     if recover_shoulder and (not execute or capture is not None):
@@ -234,6 +237,23 @@ def hardware(
                 initial = startup_states(cfg, follower, enabled=True, clock=clock, sleep=sleep)
             tare = baseline(cfg, follower, targets, clock, sleep)
             initial = startup_states(cfg, follower, enabled=True, clock=clock, sleep=sleep)
+            if recovering:
+                recovered_leader = leader.read()
+                if recovered_leader is None or any(
+                    abs(new - old) > cfg.startup_error_deg
+                    for new, old in zip(recovered_leader[0], angles)
+                ):
+                    raise LinkError(
+                        "Leader moved or feedback missing during shoulder startup return"
+                    )
+                joint = cfg.joints[1]
+                # 只更新本轮主臂 J2 软件参考；从臂零位与重力模型签名保持不变。
+                joint.leader_home_deg = recovered_leader[0][1] - math.degrees(
+                    (initial[1].pos - joint.follower_home_rad) / joint.direction
+                )
+                logger.info(
+                    "Leader J2 reference aligned after startup return; follower zero unchanged"
+                )
             session = Session(
                 cfg,
                 leader,
@@ -295,10 +315,20 @@ def hardware(
                 + [f"external_j{i}_nm" for i in range(1, 7)]
                 + [f"haptic_j{i}" for i in range(1, 8)]
                 + ["extra_load_score", "extra_load_coherence", "extra_load_strength"]
+                + [f"mos_j{i}_c" for i in range(1, 8)]
+                + [f"rotor_j{i}_c" for i in range(1, 8)]
+                + [f"leader_command_j{i}_mode" for i in range(1, 8)]
+                + [f"leader_command_j{i}_mw" for i in range(1, 8)]
+                + [f"leader_reported_j{i}_mw" for i in range(1, 8)]
+                + [f"leader_reported_j{i}_ma" for i in range(1, 8)]
+                + ["extra_load_confirmation_s"]
+                + ["extra_load_blocked_joints"]
+                + ["settled_pose"]
             )
         logger.info("%s | Python UART/CAN | Ctrl+C to stop", "EXECUTE" if execute else "PREVIEW")
         started = last_tick = report = clock()
         loops = sent = 0
+        pose_signals, settled_pose = MotionSignals(), SettledPose()
         while not duration or clock() - started < duration:
             tick = clock()
             lead = leader.read()
@@ -334,6 +364,24 @@ def hardware(
                         )
                 elif observer is not None:
                     observer.gap(now)
+            sample_steady = False
+            if valid and state == "feedback":
+                positions, velocities = [s.pos for s in states[:6]], [s.vel for s in states[:6]]
+                pose_ready = pose_signals.update(now, velocities)
+                sample_steady = (
+                    settled_pose.update(
+                        now,
+                        positions,
+                        velocities,
+                        pose_signals.acceleration,
+                        cfg.payload_max_speed_rad_s,
+                        cfg.payload_max_accel_rad_s2,
+                    )
+                    and pose_ready
+                    and interior_pose(cfg, positions)
+                )
+            else:
+                pose_signals, settled_pose = MotionSignals(), SettledPose()
             work_end = clock()
             loops += 1
             actual = [s.pos for s in states] if states else [math.nan] * 7
@@ -415,6 +463,35 @@ def hardware(
                         getattr(observer, name, math.nan)
                         for name in ("score", "coherence", "strength")
                     ]
+                    + ([s.mos_c for s in states] if states else [math.nan] * 7)
+                    + ([s.rotor_c for s in states] if states else [math.nan] * 7)
+                    + [
+                        (
+                            session.feedback.sent.get(i, (math.nan, math.nan))[0]
+                            if session
+                            else math.nan
+                        )
+                        for i in range(7)
+                    ]
+                    + [
+                        (
+                            session.feedback.sent.get(i, (math.nan, math.nan))[1]
+                            if session
+                            else math.nan
+                        )
+                        for i in range(7)
+                    ]
+                    + [
+                        getattr(leader, "telemetry", {}).get(i, {}).get("power_mw", math.nan)
+                        for i in range(7)
+                    ]
+                    + [
+                        getattr(leader, "telemetry", {}).get(i, {}).get("current_ma", math.nan)
+                        for i in range(7)
+                    ]
+                    + [getattr(observer, "confirmation_s", math.nan)]
+                    + [" ".join(f"J{i}" for i in getattr(observer, "blocked_joints", []))]
+                    + [int(sample_steady)]
                 )
             if work_end - report >= 2.0:
                 logger.info(
@@ -424,7 +501,14 @@ def hardware(
                     sent / (work_end - report),
                     error,
                     (
-                        f" extra_load={observer.strength:.0%} ({observer.status})"
+                        f" J2={math.degrees(actual[1]):+.1f} J3={math.degrees(actual[2]):+.1f}"
+                        f" extra_load={observer.strength:.0%} ({observer.status}"
+                        + (
+                            " " + "/".join(f"J{i}" for i in observer.blocked_joints)
+                            if observer.blocked_joints
+                            else ""
+                        )
+                        + ")"
                         if cfg.feedback_mode == "extra_load" and observer
                         else (
                             f" payload={observer.mass_kg:.2f}kg ({observer.status})"

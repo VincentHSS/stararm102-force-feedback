@@ -246,10 +246,35 @@ class NativeB601Tests(unittest.TestCase):
 
     def test_leader_mode_frame_matches_protocol_checksum(self):
         self.leader.mode(3, 0x12, 1000)
-        raw = self.leader_wire.sent[-1]
+        raw = self.leader_wire.sent[-2]
         self.assertEqual(raw[:4], b"\x12\x4c\x18\x04")
         self.assertEqual(struct.unpack("<BBH", raw[4:-1]), (3, 0x12, 1000))
         self.assertEqual(raw[-1], sum(raw[:-1]) & 255)
+        raw = self.leader_wire.sent[-1]
+        self.assertEqual(raw[:4], b"\x12\x4c\x09\x03")
+        self.assertEqual(struct.unpack("<BH", raw[4:-1]), (3, 1000))
+        self.assertEqual(raw[-1], sum(raw[:-1]) & 255)
+
+    def test_leader_telemetry_clears_after_missing_frame(self):
+        self.assertIsNotNone(self.leader.read())
+        self.assertEqual(self.leader.telemetry[0]["voltage_mv"], 7400)
+        self.assertEqual(self.leader.telemetry[0]["power_mw"], 0)
+        self.leader_wire.omit.add(2)
+        self.assertIsNone(self.leader.read())
+        self.assertEqual(self.leader.telemetry, {})
+
+    def test_hold_and_release_do_not_send_damping_after_their_stop_command(self):
+        self.leader.mode(3, 0x11, 6000)
+        self.leader.release()
+        self.assertTrue(all(raw[2] == 24 for raw in self.leader_wire.sent))
+
+    def test_damping_update_failure_is_reported_for_normal_cleanup(self):
+        def write(raw):
+            return len(raw) if raw[2] == 24 else 0
+
+        self.leader_wire.write = write
+        with self.assertRaises(LinkError):
+            self.leader.mode(3, 0x12, 800)
 
     def test_serial_can_transmit_frame_offsets(self):
         wire = Mock()
@@ -502,6 +527,20 @@ class NativeB601Tests(unittest.TestCase):
         fb.apply(1.01, fault=True)
         self.assertEqual(len(fb.leader.calls), 14)
 
+    def test_damping_is_refreshed_without_changing_or_releasing_hold(self):
+        fb = self.feedback()
+        fb.loads = [0.8] * 7
+        fb.apply(0)
+        fb.apply(0.1)
+        self.assertEqual(len(fb.leader.calls), 7)
+        fb.apply(0.51)
+        self.assertEqual(len(fb.leader.calls), 14)
+        self.assertTrue(all(mode == 0x12 for _, mode, _ in fb.leader.calls))
+        fb.triggers.add(1)
+        fb.apply(0.52)
+        fb.apply(1.1)
+        self.assertTrue(all(mode == 0x11 for _, mode, _ in fb.leader.calls[-7:]))
+
     def test_no_load_return_always_restores_minimum_power_even_inside_deadband(self):
         fb = self.feedback()
         fb.loads = [0.01] * 7
@@ -744,7 +783,7 @@ class NativeB601Tests(unittest.TestCase):
         self.cfg.adapter = "socketcan"
         self.cfg.baseline_s = 0.2
         self.can.positions[1] = math.radians(2.1)
-        hardware(
+        session = hardware(
             self.cfg,
             execute=True,
             recover_shoulder=True,
@@ -758,10 +797,42 @@ class NativeB601Tests(unittest.TestCase):
             struct.unpack_from("<f", data)[0] for can_id, data in self.can.sent if can_id == 0x102
         ]
         self.assertAlmostEqual(goals[0], math.radians(-5), places=6)
+        self.assertTrue(all(abs(goal - math.radians(-5)) < math.radians(0.05) for goal in goals))
+        self.assertEqual(self.cfg.joints[1].leader_home_deg, 0)
+        self.assertNotEqual(session.cfg.joints[1].leader_home_deg, 0)
         self.assertTrue(all(math.radians(-170) <= goal <= 0 for goal in goals))
         self.assertEqual(self.can.enabled, set())
         self.assertFalse(any(data == b"\xff" * 7 + b"\xfe" for _, data in self.can.sent))
         self.assertFalse(any(can_id == 0x7FF and data[2] == 0x55 for can_id, data in self.can.sent))
+
+    def test_leader_motion_during_startup_return_stops_and_disables(self):
+        self.cfg.calibration_verified, self.cfg.adapter, self.cfg.baseline_s = (
+            True,
+            "socketcan",
+            0.2,
+        )
+        self.can.positions[1] = math.radians(0.16)
+        original = self.can.send
+
+        def send(can_id, data):
+            original(can_id, data)
+            if data == b"\xff" * 7 + b"\xfc":
+                self.leader_wire.angles[1] = 20
+
+        self.can.send = send
+        with self.assertRaisesRegex(LinkError, "Leader moved"):
+            hardware(
+                self.cfg,
+                execute=True,
+                recover_shoulder=True,
+                duration=0.03,
+                serial_factory=lambda *a, **kw: self.leader_wire,
+                socket_factory=lambda _: self.can,
+                clock=self.clock,
+                sleep=self.clock.sleep,
+            )
+        self.assertEqual(self.can.enabled, set())
+        self.assertTrue(self.leader_wire.closed)
 
     def test_shoulder_recovery_still_blocks_large_upper_excursion(self):
         self.cfg.calibration_verified = True

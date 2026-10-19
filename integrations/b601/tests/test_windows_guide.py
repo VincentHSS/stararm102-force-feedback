@@ -22,6 +22,78 @@ class Capture(io.StringIO):
 
 
 class GuideTests(unittest.TestCase):
+    def test_workspace_waits_for_supported_arm_confirmation_before_finishing(self):
+        from config import Config
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            Config().save(root / "paired.json")
+            row = {"elapsed_s": "25", "valid": "1", "state": "feedback", "settled_pose": "1"}
+            for i, q in enumerate((0, -0.5, -0.7, 0, 0, 0), 1):
+                row[f"actual_j{i}_rad"] = str(q)
+                row[f"velocity_j{i}_rad_s"] = "0"
+            events, child = [], Mock()
+            child.poll.return_value = None
+            plan = Mock(index=3, collecting=True, complete=True, seconds=10)
+            plan.update.return_value = True
+            keyboard = Mock()
+            keyboard.kbhit.return_value = False
+            with (
+                patch.object(guide, "ROOT", root),
+                patch.dict(sys.modules, {"msvcrt": keyboard, "winsound": Mock()}),
+                patch("guided_plan.PoseCapture", return_value=plan),
+                patch.object(guide, "latest_row", return_value=row),
+                patch.object(
+                    guide, "save_capture_metadata", side_effect=lambda *a: events.append("saved")
+                ),
+                patch("builtins.input", side_effect=lambda *a: events.append("supported")),
+                contextlib.redirect_stdout(Capture()),
+            ):
+                self.assertTrue(
+                    guide.guided_loop(child, root / "data.csv", guide.WORKSPACE_TASKS, "workspace")
+                )
+            self.assertEqual(events, ["saved", "supported"])
+            plan.update.assert_called_once_with(25, True)
+            child.wait.assert_not_called()
+
+    def test_demo_explicit_recovery_is_disclosed_and_forwarded(self):
+        cfg, child = Mock(feedback_mode="extra_load"), Mock()
+        child.wait.return_value, child.poll.return_value = 0, 0
+        with (
+            patch("config.Config.load", return_value=cfg),
+            patch("extra_load.load_observer"),
+            patch("launcher.single_instance", return_value=contextlib.nullcontext()),
+            patch.object(guide, "refresh_leader_reference") as refresh,
+            patch.object(demo.subprocess, "Popen", return_value=child) as start,
+            patch.object(demo.sys, "platform", "linux"),
+            patch.object(demo.sys, "stdout", Capture()) as output,
+            patch.object(demo.sys, "stderr", Capture()),
+            patch("builtins.input"),
+        ):
+            self.assertEqual(demo.main(["--recover-shoulder"]), 0)
+        refresh.assert_called_once_with(True)
+        self.assertIn("--recover-shoulder", start.call_args.args[0])
+        self.assertIn("-5", output.getvalue())
+        self.assertIn("8", output.getvalue())
+
+    def test_damping_check_routes_to_leader_only_without_pairing_or_load_model(self):
+        cfg, child = Mock(feedback_mode="legacy"), Mock()
+        child.wait.return_value, child.poll.return_value = 0, 0
+        with (
+            patch("config.Config.load", return_value=cfg),
+            patch("extra_load.load_observer") as observer,
+            patch.object(guide, "refresh_leader_reference") as refresh,
+            patch.object(demo.subprocess, "Popen", return_value=child) as start,
+            patch.object(demo.sys, "platform", "linux"),
+            patch.object(demo.sys, "stdout", Capture()),
+            patch.object(demo.sys, "stderr", Capture()),
+            patch("builtins.input"),
+        ):
+            self.assertEqual(demo.main(["--check-damping"]), 0)
+        observer.assert_not_called()
+        refresh.assert_not_called()
+        self.assertEqual(start.call_args.args[0][-1], "--check-damping")
+
     def test_demo_waits_for_readiness_before_pairing_or_starting(self):
         events = []
         cfg = Mock(feedback_mode="extra_load")

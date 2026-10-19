@@ -196,6 +196,7 @@ class Feedback:
                     and (
                         abs(power - previous[1]) >= self.cfg.power_deadband_mw
                         or power == self.cfg.power_min_mw != previous[1]
+                        or now - previous[2] >= self.cfg.damping_refresh_s
                     )
                 )
             ):

@@ -113,14 +113,16 @@ def main():
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--self-check", action="store_true")
     mode.add_argument("--restore", action="store_true")
-    mode.add_argument("--collect", choices=("train", "check"))
+    mode.add_argument("--collect", choices=("train", "check", "workspace"))
     mode.add_argument("--fit", action="store_true")
     mode.add_argument("--payload", action="store_true")
+    mode.add_argument("--check-damping", action="store_true")
+    mode.add_argument("--validate-workspace", action="store_true")
     parser.add_argument("--recover-shoulder", action="store_true")
     parser.add_argument("--guided", action="store_true")
     args = parser.parse_args()
-    if args.recover_shoulder and args.collect is None:
-        parser.error("--recover-shoulder is available only for confirmed unloaded collection")
+    if args.recover_shoulder and args.collect is None and not args.payload:
+        parser.error("--recover-shoulder requires unloaded collection or unloaded payload startup")
     if args.guided and args.collect is None:
         parser.error("--guided requires unloaded collection")
     try:
@@ -143,6 +145,55 @@ def main():
         ],
     )
     try:
+        if args.validate_workspace:
+            from workspace_validation import main as validate_main
+
+            with single_instance(cfg):
+                if (LOGS / "profile.active").exists():
+                    raise RuntimeError(
+                        "Stop following and restore parameters before workspace validation"
+                    )
+                active_cfg = Config.load(ROOT / "paired_payload.json")
+                stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+                profile_path = ROOT / f"extra_load_workspace_{stamp}.json"
+                code = validate_main(
+                    [
+                        "--config",
+                        str(ROOT / "paired_payload.json"),
+                        "--profile",
+                        active_cfg.payload_calibration,
+                        "--validation",
+                        str(ROOT / "data/workspace.csv"),
+                        "--output",
+                        str(profile_path),
+                    ]
+                )
+                if code:
+                    return code
+                references = LOGS / "references"
+                references.mkdir(exist_ok=True)
+                active_cfg.save(references / f"payload_before_workspace_{stamp}.json")
+                active_cfg.payload_calibration = str(profile_path)
+                candidate = ROOT / f"paired_workspace_{stamp}.json"
+                active_cfg.save(candidate)
+                candidate.replace(ROOT / "paired_payload.json")
+                print("新增空载姿态验证通过；固定模型参数未改变，持物效果仍需复测。")
+                return 0
+        if args.check_damping:
+            from serial import Serial
+            from damping_check import run_check
+
+            with single_instance(cfg):
+                if (LOGS / "profile.active").exists():
+                    raise RuntimeError("Restore original motor parameters before checking damping")
+                STOP.unlink(missing_ok=True)
+                run_check(
+                    cfg,
+                    LOGS / f"damping_check_{datetime.now():%Y%m%d_%H%M%S_%f}.csv",
+                    Serial,
+                    sleep=sleep,
+                )
+            return 0
         if args.fit:
             from payload_tools import main as fit_main
 

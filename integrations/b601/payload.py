@@ -5,12 +5,43 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+from collections import deque
 from pathlib import Path
 
 from gravity import GravityModel, dot
 
 ALGORITHM = "b601-quasistatic-payload-v2"
 LIMIT_MARGIN_DEG = 2.0
+SETTLED_GATE = "continuous-0.5s-speed0.05-accel0.15-span0.5deg-v1"
+
+
+class SettledPose:
+    """小速度不代表静止；连续检查速度、加速度及实际位置变化。"""
+
+    def __init__(self):
+        self.rows = deque()
+        self.last = None
+
+    def update(self, now, positions, velocity, acceleration, speed_limit, accel_limit):
+        gap = self.last is not None and not 0 < now - self.last <= 0.05
+        self.last = now
+        if (
+            gap
+            or max(map(abs, velocity)) > min(speed_limit, 0.05)
+            or max(map(abs, acceleration)) > min(accel_limit, 0.15)
+        ):
+            self.rows.clear()
+            return False
+        self.rows.append((now, list(positions)))
+        while len(self.rows) > 1 and now - self.rows[1][0] >= 0.5:
+            self.rows.popleft()
+        if now - self.rows[0][0] < 0.5:
+            return False
+        return all(
+            max(row[1][i] for row in self.rows) - min(row[1][i] for row in self.rows)
+            <= math.radians(0.5)
+            for i in range(6)
+        )
 
 
 def interior_pose(cfg, positions):
