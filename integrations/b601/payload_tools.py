@@ -145,7 +145,9 @@ def load_samples(path, cfg):
     return result
 
 
-def fit_profile(training, validation, model, cfg):
+def fit_profile(training, validation, model, cfg, mode="payload"):
+    if mode not in ("payload", "extra_load"):
+        raise ValueError("Unknown calibration mode")
     training = [row for row in training if interior_pose(cfg, row["q"])]
     validation = [row for row in validation if interior_pose(cfg, row["q"])]
     if len(training) < 120 or len(validation) < 80:
@@ -219,6 +221,64 @@ def fit_profile(training, validation, model, cfg):
         raise ValueError(
             "Validation poses exceed training coverage; collect a wider unloaded training path"
         )
+    common = {
+        "config_signature": signature(cfg),
+        "model_path": str(model.path),
+        "model_sha256": model.sha256,
+        "model_directions": model.directions,
+        "model_offsets_rad": model.offsets,
+        "gravity_m_s2": list(model.gravity),
+        "coefficients": coefficients,
+        "active_axes": axes,
+        "bounds_rad": bounds,
+        "training_samples": len(training),
+    }
+    if mode == "extra_load":
+        from extra_load import (
+            ALGORITHM as EXTRA_ALGORITHM,
+            MIN_COHERENCE,
+            THRESHOLD,
+            is_extra_load,
+            load_evidence,
+        )
+
+        # 噪声只从训练数据计算；独立复测只负责验收，不回调阈值或拟合系数。
+        noise_rows = [[] for _ in range(6)]
+        for row, gravity in zip(training, gravity_rows):
+            for i in range(6):
+                residual = (
+                    row["tau"][i] - dot(coefficients[i], friction_features(gravity[i], row["v"][i]))
+                ) / coefficients[i][1]
+                noise_rows[i].append(abs(residual))
+        noise = [max(0.03, percentile(row, 0.95)) for row in noise_rows]
+        evidence = [load_evidence(values, residual, noise, axes) for values, residual in valid_rows]
+        evidence = [row for row in evidence if row is not None]
+        if not evidence:
+            raise ValueError("Unloaded validation has no observable extra-load poses")
+        scores = [row[0] for row in evidence]
+        report = {
+            "samples": len(validation),
+            "valid_fraction": len(evidence) / len(validation),
+            "false_activation_fraction": sum(is_extra_load(*row) for row in evidence)
+            / len(evidence),
+            "score_p99": percentile(scores, 0.99),
+            "score_max": max(scores),
+            "joint_residual_rmse_nm": [
+                math.sqrt(sum(x * x for x in row) / len(row)) for row in errors
+            ],
+        }
+        return {
+            **common,
+            "algorithm": EXTRA_ALGORITHM,
+            "validated": report["valid_fraction"] >= 0.7
+            and report["false_activation_fraction"] == 0,
+            "validation_scope": "independent_unloaded_only",
+            "noise_source": "training_only_p95_absolute_residual",
+            "evidence_threshold": THRESHOLD,
+            "minimum_coherence": MIN_COHERENCE,
+            "sigma_nm": noise,
+            "validation": report,
+        }
     sigma = [max(0.03, percentile([abs(x) for x in row], 0.95)) for row in errors]
     masses = []
     for values, residual in valid_rows:
@@ -239,20 +299,11 @@ def fit_profile(training, validation, model, cfg):
     deadband = max(0.05, report["mass_abs_p99_kg"])
     passed = report["valid_fraction"] >= 0.7 and report["mass_rmse_kg"] <= 0.1 and deadband <= 0.2
     return {
+        **common,
         "algorithm": ALGORITHM,
         "validated": passed,
-        "config_signature": signature(cfg),
-        "model_path": str(model.path),
-        "model_sha256": model.sha256,
-        "model_directions": model.directions,
-        "model_offsets_rad": model.offsets,
-        "gravity_m_s2": list(model.gravity),
-        "coefficients": coefficients,
         "sigma_nm": sigma,
-        "active_axes": axes,
-        "bounds_rad": bounds,
         "mass_deadband_kg": deadband,
-        "training_samples": len(training),
         "validation": report,
     }
 
@@ -278,6 +329,7 @@ def main(argv=None):
     fit.add_argument("--directions", nargs=6, type=float, default=[1.0] * 6)
     fit.add_argument("--offsets-deg", nargs=6, type=float, default=[0.0] * 6)
     fit.add_argument("--gravity", nargs=3, type=float, default=[0, 0, -9.80665])
+    fit.add_argument("--mode", choices=("payload", "extra_load"), default="extra_load")
     for name in ("enable", "inspect"):
         sub = commands.add_parser(name)
         sub.add_argument("--config", type=Path, required=True)
@@ -312,7 +364,11 @@ def main(argv=None):
                 args.gravity,
             )
             profile = fit_profile(
-                load_samples(args.train, cfg), load_samples(args.validation, cfg), model, cfg
+                load_samples(args.train, cfg),
+                load_samples(args.validation, cfg),
+                model,
+                cfg,
+                args.mode,
             )
             profile["data_sha256"] = {"training": train_hash, "validation": val_hash}
             profile["model_path"] = os.path.relpath(model.path, args.output.resolve().parent)
@@ -321,7 +377,7 @@ def main(argv=None):
                 json.dumps(
                     {
                         "validated": profile["validated"],
-                        "deadband_kg": profile["mass_deadband_kg"],
+                        "algorithm": profile["algorithm"],
                         "validation": profile["validation"],
                     },
                     ensure_ascii=False,
@@ -329,11 +385,16 @@ def main(argv=None):
                 )
             )
             return 0 if profile["validated"] else 2
-        calibration = Calibration.load(args.profile, cfg)
+        from extra_load import ALGORITHM as EXTRA_ALGORITHM, ExtraLoadCalibration
+
+        algorithm = json.loads(args.profile.read_text(encoding="utf-8-sig")).get("algorithm")
+        calibration_class = ExtraLoadCalibration if algorithm == EXTRA_ALGORITHM else Calibration
+        calibration = calibration_class.load(args.profile, cfg)
         if args.command == "enable":
             if args.output.exists():
                 raise FileExistsError(args.output)
-            cfg.feedback_mode, cfg.payload_calibration = "payload", str(args.profile.resolve())
+            cfg.feedback_mode = "extra_load" if algorithm == EXTRA_ALGORITHM else "payload"
+            cfg.payload_calibration = str(args.profile.resolve())
             cfg.save(args.output)
             print(f"Payload configuration saved: {args.output}; no device opened")
         else:

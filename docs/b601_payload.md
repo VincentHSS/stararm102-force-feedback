@@ -1,5 +1,7 @@
 # B601：本体自重扣除与物体负载反馈
 
+本页保留公斤数估计研究模式 `payload`。当前推荐[额外负载反馈 `extra_load`](b601_extra_load.md)，优先区分空载与额外负载，不输出公斤数。本机独立空载验证通过的是 `extra_load`，本页质量估计未通过实机不确定度门槛。
+
 目标是空手抬臂时尽量轻松，拿起物体后再增加 Leader 阻尼。新路径使用有正负号的关节力矩、实际姿态和速度，联合估计整臂额外竖直负载，不再将各轴电流分别映射为各轴阻尼。
 
 **当前：代码和模拟回归已实现，本机空载标定及已知物体实机验证尚未完成。此前的 Windows 双击展示包仍是旧算法。** 没有通过验证的标定文件时，新模式在打开串口前拒绝运行。
@@ -53,7 +55,7 @@ CSV 与 `.meta.json` 记录用途和配对签名。旧展示日志、未知是�
 ## 3. 拟合、独立验证、生成配置
 
 ```powershell
-python payload_tools.py fit --config paired.json --model payload_data/ReBot_Arm_DM.urdf --train payload_data/empty_train.csv --validation payload_data/empty_check.csv --output payload_data/unloaded_profile.json
+python payload_tools.py fit --mode payload --config paired.json --model payload_data/ReBot_Arm_DM.urdf --train payload_data/empty_train.csv --validation payload_data/empty_check.csv --output payload_data/unloaded_profile.json
 python payload_tools.py enable --config paired.json --profile payload_data/unloaded_profile.json --output paired_payload.json
 ```
 

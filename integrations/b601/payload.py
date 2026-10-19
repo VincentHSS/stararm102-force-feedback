@@ -100,18 +100,20 @@ def vertical_fit(model_values, residual, sigma, active_axes):
 
 
 class Calibration:
+    algorithm = ALGORITHM
+
     def __init__(self, data, model):
         self.data, self.model = data, model
         self.coefficients = data["coefficients"]
         self.sigma = data["sigma_nm"]
         self.axes = data["active_axes"]
-        self.deadband = data["mass_deadband_kg"]
+        self.deadband = data.get("mass_deadband_kg", 0.0)
 
     @classmethod
     def load(cls, path, cfg):
         path = Path(path).resolve()
         data = json.loads(path.read_text(encoding="utf-8-sig"))
-        if data.get("algorithm") != ALGORITHM or data.get("validated") is not True:
+        if data.get("algorithm") != cls.algorithm or data.get("validated") is not True:
             raise ValueError("Use a validated unloaded calibration from payload_tools.py")
         if data.get("config_signature") != signature(cfg):
             raise ValueError("Pairing/mapping changed; repeat unloaded calibration and validation")
@@ -143,6 +145,14 @@ class Calibration:
             finite_vector(pair, 2)
             if pair[0] >= pair[1]:
                 raise ValueError("Invalid calibrated position range")
+        cls.validate_report(data)
+        counts = (data["validation"].get("samples", 0), data.get("training_samples", 0))
+        if any(type(value) is not int or value < limit for value, limit in zip(counts, (80, 120))):
+            raise ValueError("Insufficient independent unloaded samples")
+        return cls(data, model)
+
+    @staticmethod
+    def validate_report(data):
         report = data["validation"]
         for key in ("mass_rmse_kg", "mass_abs_p99_kg", "valid_fraction"):
             value = report[key]
@@ -165,9 +175,6 @@ class Calibration:
             or not 0.7 <= report["valid_fraction"] <= 1
         ):
             raise ValueError("Unloaded validation did not pass")
-        if report.get("samples", 0) < 80 or data.get("training_samples", 0) < 120:
-            raise ValueError("Insufficient independent unloaded samples")
-        return cls(data, model)
 
     def residual(self, positions, velocity, measured):
         values = self.model.evaluate(positions)

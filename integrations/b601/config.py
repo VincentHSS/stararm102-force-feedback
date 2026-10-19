@@ -178,11 +178,11 @@ class Config:
             raise ValueError("Invalid observation/baseline interval")
         if not 0 < self.gripper_force_ratio <= 1 or not 1 <= self.startup_error_deg <= 20:
             raise ValueError("Invalid gripper force ratio or startup error")
-        if self.feedback_mode not in ("legacy", "payload") or not isinstance(
+        if self.feedback_mode not in ("legacy", "payload", "extra_load") or not isinstance(
             self.payload_calibration, str
         ):
-            raise ValueError("feedback_mode must be legacy or payload")
-        if self.feedback_mode == "payload" and not self.payload_calibration.strip():
+            raise ValueError("feedback_mode must be legacy, payload or extra_load")
+        if self.feedback_mode != "legacy" and not self.payload_calibration.strip():
             raise ValueError("Payload feedback needs a validated unloaded calibration file")
         if (
             not 0.2 < self.payload_reference_kg <= 2

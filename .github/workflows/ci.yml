@@ -41,6 +41,7 @@ jobs:
           python integrations/b601/teleop.py --help
           python -S integrations/b601/payload_tools.py --help
           python integrations/b601/windows/calibration_guide.py --help
+          python integrations/b601/windows/demo.py --help
           python -S integrations/b601/teleop.py --simulate --duration 0.2
       - name: Check command line help
         run: python stararm102_ro.py --help

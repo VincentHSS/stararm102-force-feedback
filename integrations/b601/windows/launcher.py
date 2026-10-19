@@ -8,6 +8,7 @@ import math
 import sys
 import time
 import traceback
+from datetime import datetime
 from contextlib import contextmanager
 from ctypes import wintypes
 from pathlib import Path
@@ -83,6 +84,10 @@ def run(cfg, recover=False, collection=None, recover_shoulder=False, guided=Fals
         try:
             apply_trial(cfg, original, Serial)
             logging.info("B601-DM | %s / %s | ACC/DEC 4/-4", cfg.leader_port, cfg.follower_port)
+            if not collection and (LOGS / "execute.csv").exists():
+                (LOGS / "execute.csv").rename(
+                    LOGS / f"execute_{datetime.now():%Y%m%d_%H%M%S_%f}.csv"
+                )
             hardware(
                 cfg,
                 execute=True,
@@ -144,9 +149,12 @@ def main():
             with single_instance(cfg):
                 if (LOGS / "profile.active").exists():
                     raise RuntimeError("Restore original motor parameters before fitting")
+                stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+                profile_path = ROOT / f"extra_load_profile_{stamp}.json"
+                new_config = ROOT / f"paired_payload_{stamp}.json"
                 common = ["--config", str(ROOT / "paired.json")]
                 code = fit_main(
-                    ["fit"]
+                    ["fit", "--mode", "extra_load"]
                     + common
                     + [
                         "--model",
@@ -156,25 +164,36 @@ def main():
                         "--validation",
                         str(ROOT / "data/check.csv"),
                         "--output",
-                        str(ROOT / "unloaded_profile.json"),
+                        str(profile_path),
                     ]
                 )
                 if code:
                     return code
-                return fit_main(
+                code = fit_main(
                     ["enable"]
                     + common
                     + [
                         "--profile",
-                        str(ROOT / "unloaded_profile.json"),
+                        str(profile_path),
                         "--output",
-                        str(ROOT / "paired_payload.json"),
+                        str(new_config),
                     ]
                 )
+                if code:
+                    return code
+                Config.load(new_config).validate()
+                previous = ROOT / "paired_payload.json"
+                if previous.exists():
+                    references = LOGS / "references"
+                    references.mkdir(exist_ok=True)
+                    Config.load(previous).save(references / f"payload_before_fit_{stamp}.json")
+                new_config.replace(previous)
+                print("空载验证通过，额外负载配置已生成；实物反馈仍需测试。")
+                return 0
         if args.payload:
-            from payload import Calibration
+            from extra_load import load_observer
 
-            Calibration.load(cfg.payload_calibration, cfg)
+            load_observer(cfg)
         run(
             cfg,
             recover=args.restore,

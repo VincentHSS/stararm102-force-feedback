@@ -226,7 +226,7 @@ class Session:
         self.feedback.prime([s.torque for s in initial] if baseline is None else baseline)
         self.payload = payload_observer
         self.calibrating = calibrating
-        if cfg.feedback_mode == "payload" and not calibrating and self.payload is None:
+        if cfg.feedback_mode != "legacy" and not calibrating and self.payload is None:
             raise ValueError("Payload mode requires a validated observer before enabling motors")
         if self.payload is not None or calibrating:
             self.feedback.haptic_loads = [0.0] * 7

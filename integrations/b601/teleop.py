@@ -134,11 +134,11 @@ def hardware(
         from payload import signature
 
         path.parent.mkdir(parents=True, exist_ok=True)
-    elif cfg.feedback_mode == "payload" and capture is None:
-        from payload import Calibration, PayloadObserver
+    elif cfg.feedback_mode != "legacy" and capture is None:
+        from extra_load import load_observer
 
         # 标定、模型文件与配对签名都在打开设备前校验。
-        observer = PayloadObserver(cfg, Calibration.load(cfg.payload_calibration, cfg))
+        observer = load_observer(cfg)
     if serial_factory is None:
         from serial import Serial
 
@@ -294,6 +294,7 @@ def hardware(
                 ]
                 + [f"external_j{i}_nm" for i in range(1, 7)]
                 + [f"haptic_j{i}" for i in range(1, 8)]
+                + ["extra_load_score", "extra_load_coherence", "extra_load_strength"]
             )
         logger.info("%s | Python UART/CAN | Ctrl+C to stop", "EXECUTE" if execute else "PREVIEW")
         started = last_tick = report = clock()
@@ -410,6 +411,10 @@ def hardware(
                             else (session.feedback.loads if session else [math.nan] * 7)
                         )
                     )
+                    + [
+                        getattr(observer, name, math.nan)
+                        for name in ("score", "coherence", "strength")
+                    ]
                 )
             if work_end - report >= 2.0:
                 logger.info(
@@ -418,7 +423,15 @@ def hardware(
                     loops / (work_end - report),
                     sent / (work_end - report),
                     error,
-                    f" payload={observer.mass_kg:.2f}kg ({observer.status})" if observer else "",
+                    (
+                        f" extra_load={observer.strength:.0%} ({observer.status})"
+                        if cfg.feedback_mode == "extra_load" and observer
+                        else (
+                            f" payload={observer.mass_kg:.2f}kg ({observer.status})"
+                            if observer
+                            else ""
+                        )
+                    ),
                 )
                 loops = sent = 0
                 report = work_end
@@ -480,11 +493,11 @@ class SimFollower:
 
 def simulate(cfg, duration=5, stalled=None, payload_kg=0.0):
     observer, calibration = None, None
-    if cfg.feedback_mode == "payload":
-        from payload import Calibration, PayloadObserver
+    if cfg.feedback_mode != "legacy":
+        from extra_load import load_observer
 
-        calibration = Calibration.load(cfg.payload_calibration, cfg)
-        observer = PayloadObserver(cfg, calibration)
+        observer = load_observer(cfg)
+        calibration = observer.calibration
     elif payload_kg:
         raise ValueError(
             "Payload simulation needs a payload configuration and validated calibration"
@@ -505,7 +518,11 @@ def simulate(cfg, duration=5, stalled=None, payload_kg=0.0):
         session.feedback.state,
         sorted(session.feedback.triggers),
     )
-    if observer:
+    if observer and cfg.feedback_mode == "extra_load":
+        logger.info(
+            "Extra-load simulation: feedback=%.0f%% | %s", observer.strength * 100, observer.status
+        )
+    elif observer:
         logger.info(
             "Payload simulation: input=%.2fkg estimate=%.2fkg | %s",
             payload_kg,

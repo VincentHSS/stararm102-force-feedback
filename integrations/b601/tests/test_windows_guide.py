@@ -12,6 +12,7 @@ APP = Path(__file__).resolve().parents[1] / "windows"
 sys.path.insert(0, str(APP))
 import calibration_guide as guide
 import launcher
+import demo
 from guided_plan import PoseCapture
 
 
@@ -21,6 +22,46 @@ class Capture(io.StringIO):
 
 
 class GuideTests(unittest.TestCase):
+    def test_demo_waits_for_readiness_before_pairing_or_starting(self):
+        events = []
+        cfg = Mock(feedback_mode="extra_load")
+        child = Mock()
+        child.wait.return_value, child.poll.return_value = 0, 0
+        with (
+            patch("config.Config.load", return_value=cfg),
+            patch("extra_load.load_observer"),
+            patch("launcher.single_instance", return_value=contextlib.nullcontext()),
+            patch.object(
+                guide, "refresh_leader_reference", side_effect=lambda: events.append("reference")
+            ),
+            patch.object(
+                demo.subprocess,
+                "Popen",
+                side_effect=lambda *a, **kw: events.append("start") or child,
+            ),
+            patch.object(demo.sys, "platform", "linux"),
+            patch.object(demo.sys, "stdout", Capture()),
+            patch.object(demo.sys, "stderr", Capture()),
+            patch("builtins.input", side_effect=lambda prompt: events.append("ready")),
+        ):
+            self.assertEqual(demo.main([]), 0)
+        self.assertEqual(events, ["ready", "reference", "start"])
+
+    def test_demo_cancellation_before_readiness_opens_no_devices(self):
+        with (
+            patch("config.Config.load", return_value=Mock(feedback_mode="extra_load")),
+            patch("extra_load.load_observer"),
+            patch.object(guide, "refresh_leader_reference") as refresh,
+            patch.object(demo.subprocess, "Popen") as start,
+            patch.object(demo.sys, "stdout", Capture()),
+            patch.object(demo.sys, "stderr", Capture()),
+            patch("builtins.input", side_effect=KeyboardInterrupt),
+        ):
+            with self.assertRaises(KeyboardInterrupt):
+                demo.main([])
+        refresh.assert_not_called()
+        start.assert_not_called()
+
     def test_preparation_time_never_starts_or_finishes_capture(self):
         plan = PoseCapture()
         for now in range(300):
@@ -107,8 +148,9 @@ class GuideTests(unittest.TestCase):
             payload_cfg.payload_calibration = str(root / "placeholder_profile.json")
             payload_cfg.save(root / "paired_payload.json")
             before = signature(cfg)
-            with patch.object(guide, "ROOT", root), patch(
-                "serial.Serial", side_effect=[port(leader), port(bridge)]
+            with (
+                patch.object(guide, "ROOT", root),
+                patch("serial.Serial", side_effect=[port(leader), port(bridge)]),
             ):
                 guide.refresh_leader_reference()
             after = Config.load(root / "paired.json")
@@ -147,26 +189,22 @@ class GuideTests(unittest.TestCase):
                 )
                 return child
 
-            with patch.object(guide, "ROOT", root), patch.object(
-                guide.ctypes, "windll", Mock(), create=True
-            ), patch.object(
-                launcher, "single_instance", lambda cfg: contextlib.nullcontext()
-            ), patch.object(
-                guide, "refresh_leader_reference"
-            ), patch.object(
-                guide,
-                "guided_loop",
-                side_effect=KeyboardInterrupt if interrupted else None,
-                return_value=True,
-            ), patch.object(
-                guide.subprocess, "Popen", side_effect=spawn
-            ), patch.object(
-                guide.time, "sleep"
-            ), patch(
-                "builtins.input", return_value=""
-            ), contextlib.redirect_stdout(
-                Capture()
-            ) as output:
+            with (
+                patch.object(guide, "ROOT", root),
+                patch.object(guide.ctypes, "windll", Mock(), create=True),
+                patch.object(launcher, "single_instance", lambda cfg: contextlib.nullcontext()),
+                patch.object(guide, "refresh_leader_reference"),
+                patch.object(
+                    guide,
+                    "guided_loop",
+                    side_effect=KeyboardInterrupt if interrupted else None,
+                    return_value=True,
+                ),
+                patch.object(guide.subprocess, "Popen", side_effect=spawn),
+                patch.object(guide.time, "sleep"),
+                patch("builtins.input", return_value=""),
+                contextlib.redirect_stdout(Capture()) as output,
+            ):
                 code = guide.main(["--ready"])
             if interrupted:
                 self.assertTrue((root / "stop.request").exists())
