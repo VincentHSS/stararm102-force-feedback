@@ -14,6 +14,7 @@ from pathlib import Path
 APP = Path(__file__).resolve().parent
 ROOT = APP.parent
 sys.path.insert(0, str(ROOT))
+POSE_TOLERANCE_DEG = 5
 TASKS = (
     "动 J2 肩 + J3 肘：均离开折叠位约 30-45 度，再停住。",
     "固定 J2 肩，只动 J3 肘约 45 度，让前臂明显倾斜，再停住。",
@@ -139,9 +140,9 @@ def guided_loop(child, path, tasks, mode):
         errors = []
         if mode == "check" and angles is not None:
             errors = [
-                f"J{i} 需在 {goal-5}～{goal+5}°，当前 {math.degrees(q[i-1]):.1f}°"
+                f"J{i} 允许 {goal-POSE_TOLERANCE_DEG}～{goal+POSE_TOLERANCE_DEG}°，当前 {math.degrees(q[i-1]):.1f}°"
                 for i, goal in targets[plan.index].items()
-                if abs(math.degrees(q[i - 1]) - goal) > 5
+                if abs(math.degrees(q[i - 1]) - goal) > POSE_TOLERANCE_DEG
             ]
         eligible = interior and not errors
         steady = eligible and max(map(abs, v)) <= cfg.payload_max_speed_rad_s
@@ -163,14 +164,15 @@ def guided_loop(child, path, tasks, mode):
             if key == "\x1b":
                 raise KeyboardInterrupt
             if key == "\r" and not plan.collecting:
-                if steady:
+                ready_to_confirm = eligible if mode == "workspace" else steady
+                if ready_to_confirm:
                     plan.begin(now)
                     try:
                         winsound.Beep(650, 200)
                     except RuntimeError:
                         pass
                 else:
-                    print("\n请先停稳，并让各关节离开行程边界。" + ("；".join(errors)), flush=True)
+                    print("\n请让各关节离开行程边界。" + ("；".join(errors)), flush=True)
         advanced = plan.update(now, steady)
         actual = (
             ""
@@ -240,6 +242,7 @@ def main(argv=None):
     print("共四组。每组准备时间不限，到位后按回车，再保持静止 10 秒。")
     if args.collect == "workspace":
         print("本轮仅验证你实际取放水瓶的空手姿态，全程不要夹物。")
+        print("姿态允许约 ±5° 差别，不要求精确角度；到位即可回车，不必等瞬间静止。")
         print("停稳后才累计有效时间；不会拟合或改动现有自重模型。")
         print("四组完成后会等待你放稳从臂、按回车，再停止跟随。")
     print("第一次回车启动跟随；之后每组摆好姿态，再按一次回车开始本组采样。")

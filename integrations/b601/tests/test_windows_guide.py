@@ -56,6 +56,38 @@ class GuideTests(unittest.TestCase):
             plan.update.assert_called_once_with(25, True)
             child.wait.assert_not_called()
 
+    def test_workspace_confirmation_can_precede_settling_without_counting_moving_data(self):
+        from config import Config
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            Config().save(root / "paired.json")
+            row = {"elapsed_s": "25", "valid": "1", "state": "feedback", "settled_pose": "0"}
+            for i, q in enumerate((0, -0.5, -0.7, 0, 0, 0), 1):
+                row[f"actual_j{i}_rad"] = str(q)
+                row[f"velocity_j{i}_rad_s"] = "0.1"
+            child = Mock()
+            child.poll.return_value = None
+            plan = Mock(index=3, collecting=False, complete=True, seconds=0)
+            plan.update.return_value = True
+            keyboard = Mock()
+            keyboard.kbhit.side_effect = [False, True, False]
+            keyboard.getwch.return_value = "\r"
+            with (
+                patch.object(guide, "ROOT", root),
+                patch.dict(sys.modules, {"msvcrt": keyboard, "winsound": Mock()}),
+                patch("guided_plan.PoseCapture", return_value=plan),
+                patch.object(guide, "latest_row", return_value=row),
+                patch.object(guide, "save_capture_metadata"),
+                patch("builtins.input", return_value=""),
+                contextlib.redirect_stdout(Capture()),
+            ):
+                self.assertTrue(
+                    guide.guided_loop(child, root / "data.csv", guide.WORKSPACE_TASKS, "workspace")
+                )
+            plan.begin.assert_called_once_with(25)
+            plan.update.assert_called_once_with(25, False)
+
     def test_demo_explicit_recovery_is_disclosed_and_forwarded(self):
         cfg, child = Mock(feedback_mode="extra_load"), Mock()
         child.wait.return_value, child.poll.return_value = 0, 0
