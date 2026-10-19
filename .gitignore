@@ -13,6 +13,12 @@ Thumbs.db
 
 configs/*.local.json
 integrations/b601/payload_data/
+integrations/b601/data/
+integrations/b601/logs/
+integrations/b601/paired*.json
+integrations/b601/unloaded_profile.json
+integrations/b601/ReBot_Arm_DM.urdf
+integrations/b601/stop.request
 
 build/
 dist/

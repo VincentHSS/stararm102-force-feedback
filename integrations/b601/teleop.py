@@ -104,6 +104,7 @@ def hardware(
     capture=None,
     diagnostics=None,
     collect_unloaded=False,
+    guided_collection=False,
     duration=0,
     serial_factory=None,
     socket_factory=SocketCAN,
@@ -112,6 +113,8 @@ def hardware(
     sleep=time.sleep,
 ):
     cfg.validate()
+    if guided_collection and not collect_unloaded:
+        raise ValueError("Guided collection requires unloaded collection")
     if recover_shoulder and (not execute or capture is not None):
         raise ValueError("Shoulder recovery requires execute without pose capture")
     if execute and not cfg.calibration_verified:
@@ -252,11 +255,12 @@ def hardware(
             )
             if collect_unloaded:
                 with metadata_path.open("x", encoding="utf-8") as metadata_stream:
-                    json.dump(
-                        {"confirmed_unloaded": True, "config_signature": signature(cfg)},
-                        metadata_stream,
-                        indent=2,
-                    )
+                    metadata = {"confirmed_unloaded": True, "config_signature": signature(cfg)}
+                    if guided_collection:
+                        metadata.update(
+                            sample_selection="operator_pose_capture", capture_complete=False
+                        )
+                    json.dump(metadata, metadata_stream, indent=2)
             writer = csv.writer(stream)
             writer.writerow(
                 [

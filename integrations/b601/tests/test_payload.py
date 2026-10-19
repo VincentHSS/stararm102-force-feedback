@@ -243,6 +243,24 @@ class PayloadTests(unittest.TestCase):
             rows = load_samples(path, self.cfg)
             self.assertTrue(rows)
             self.assertTrue(all(row["q"][1] == -0.5 for row in rows))
+            metadata_path = path.with_suffix(".csv.meta.json")
+            metadata = json.loads(metadata_path.read_text())
+            metadata.update(sample_selection="operator_pose_capture", capture_complete=False)
+            metadata_path.write_text(json.dumps(metadata))
+            with self.assertRaisesRegex(ValueError, "Guided collection incomplete"):
+                load_samples(path, self.cfg)
+            metadata.update(
+                capture_complete=True,
+                sample_intervals_s=[[2, 2.45], [2.5, 2.95], [3, 3.45], [3.5, 3.95]],
+            )
+            metadata_path.write_text(json.dumps(metadata))
+            guided = load_samples(path, self.cfg)
+            self.assertTrue(guided)
+            self.assertLess(len(guided), len(rows))
+            metadata["sample_intervals_s"][1] = [2.1, 2.8]
+            metadata_path.write_text(json.dumps(metadata))
+            with self.assertRaisesRegex(ValueError, "Invalid guided collection intervals"):
+                load_samples(path, self.cfg)
 
     def test_short_gap_does_not_repeatedly_drop_and_ramp_feedback(self):
         observer = self.observer()

@@ -81,6 +81,29 @@ def load_samples(path, cfg):
         "config_signature"
     ) != signature(cfg):
         raise ValueError("Use separately collected, confirmed unloaded data from the same pairing")
+    intervals = None
+    if metadata.get("sample_selection") == "operator_pose_capture":
+        intervals = metadata.get("sample_intervals_s")
+        if metadata.get("capture_complete") is not True:
+            raise ValueError(
+                "Guided collection incomplete; finish all four pose captures before fitting"
+            )
+        if (
+            not isinstance(intervals, list)
+            or len(intervals) != 4
+            or any(
+                not isinstance(pair, list)
+                or len(pair) != 2
+                or not all(
+                    isinstance(x, (int, float)) and not isinstance(x, bool) and math.isfinite(x)
+                    for x in pair
+                )
+                or not 0 <= pair[0] < pair[1]
+                for pair in intervals
+            )
+            or any(a[1] > b[0] for a, b in zip(intervals, intervals[1:]))
+        ):
+            raise ValueError("Invalid guided collection intervals")
     signals, result, last_sample = MotionSignals(), [], -math.inf
     with path.open(encoding="utf-8-sig", newline="") as stream:
         for row in csv.DictReader(stream):
@@ -93,6 +116,9 @@ def load_samples(path, cfg):
                     signals = MotionSignals()
                     continue
                 now = float(row["elapsed_s"])
+                if intervals is not None and not any(lo <= now <= hi for lo, hi in intervals):
+                    signals = MotionSignals()
+                    continue
                 q = [float(row[f"actual_j{i}_rad"]) for i in range(1, 7)]
                 raw_v = [float(row[f"velocity_j{i}_rad_s"]) for i in range(1, 7)]
                 tau = [float(row[f"torque_j{i}_nm"]) for i in range(1, 7)]
